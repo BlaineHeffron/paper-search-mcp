@@ -27,6 +27,13 @@ impl FulltextIndex {
         std::fs::create_dir_all(path)
             .context("Failed to create tantivy index directory")?;
 
+        // Remove stale writer lock from a previous crashed process.
+        // Safe because this MCP server is single-process.
+        let lock_path = path.join(".tantivy-writer.lock");
+        if lock_path.exists() {
+            let _ = std::fs::remove_file(&lock_path);
+        }
+
         let mut schema_builder = Schema::builder();
         let f_id = schema_builder.add_text_field("id", STRING | STORED);
         let f_title = schema_builder.add_text_field("title", TEXT | STORED);
