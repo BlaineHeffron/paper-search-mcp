@@ -57,8 +57,6 @@ jobs:
 
       - name: Build (cross)
         if: matrix.cross
-        env:
-          PROTOC: /usr/bin/protoc
         run: cross build --release --features vendored-openssl --target ${{ matrix.target }}
 
       - name: Build (native)
