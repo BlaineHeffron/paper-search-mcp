@@ -8,6 +8,7 @@ license = "MIT"
 [features]
 default = []
 onnx = ["dep:ort", "dep:tokenizers"]
+vendored-openssl = ["dep:openssl"]
 
 [dependencies]
 rmcp = { version = "0.14", features = ["server", "transport-io", "macros"] }
@@ -33,3 +34,4 @@ arrow-schema = "57"
 futures = "0.3"
 anyhow = "1"
 schemars = "1"
+openssl = { version = "0.10", features = ["vendored"], optional = true }

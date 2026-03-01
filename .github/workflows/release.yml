@@ -44,7 +44,7 @@ jobs:
 
       - name: Build (cross)
         if: matrix.cross
-        run: cross build --release --target ${{ matrix.target }}
+        run: cross build --release --features vendored-openssl --target ${{ matrix.target }}
 
       - name: Build (native)
         if: ${{ !matrix.cross && matrix.target != 'universal-apple-darwin' }}
