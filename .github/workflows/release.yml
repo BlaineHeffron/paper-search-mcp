@@ -33,6 +33,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install protoc (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install protoc -y
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -44,6 +57,8 @@ jobs:
 
       - name: Build (cross)
         if: matrix.cross
+        env:
+          PROTOC: /usr/bin/protoc
         run: cross build --release --features vendored-openssl --target ${{ matrix.target }}
 
       - name: Build (native)
