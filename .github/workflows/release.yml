@@ -37,7 +37,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           curl -L -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-linux-x86_64.zip
-          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc
+          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc 'include/*'
           sudo chmod +x /usr/local/bin/protoc
 
       - name: Install protoc (macOS)
