@@ -40,15 +40,17 @@ impl LocalIndex {
 
     /// Index a paper with a precomputed embedding.
     pub async fn index_paper(&mut self, paper: &PaperResult, embedding: &[f32]) -> Result<()> {
-        self.fulltext.add_paper(
+        self.vector.add_paper(paper, embedding).await?;
+        if let Err(err) = self.fulltext.add_paper(
             &paper.id,
             &paper.title,
             paper.abstract_text.as_deref(),
             &paper.authors,
             paper.year,
-        )?;
-        self.vector.add_paper(paper, embedding).await?;
-        self.fulltext.commit()?;
+        ) {
+            let _ = self.vector.delete(&paper.id).await;
+            return Err(err);
+        }
         Ok(())
     }
 
@@ -80,7 +82,6 @@ impl LocalIndex {
     /// Delete a paper from both indices.
     pub async fn delete(&mut self, id: &str) -> Result<()> {
         self.fulltext.delete(id)?;
-        self.fulltext.commit()?;
         self.vector.delete(id).await?;
         Ok(())
     }

@@ -12,7 +12,6 @@ use tantivy::{
 pub struct FulltextIndex {
     index: Index,
     reader: IndexReader,
-    writer: IndexWriter,
     // Field handles
     f_id: Field,
     f_title: Field,
@@ -26,13 +25,6 @@ impl FulltextIndex {
     pub fn create_or_open(path: &Path) -> Result<Self> {
         std::fs::create_dir_all(path)
             .context("Failed to create tantivy index directory")?;
-
-        // Remove stale writer lock from a previous crashed process.
-        // Safe because this MCP server is single-process.
-        let lock_path = path.join(".tantivy-writer.lock");
-        if lock_path.exists() {
-            let _ = std::fs::remove_file(&lock_path);
-        }
 
         let mut schema_builder = Schema::builder();
         let f_id = schema_builder.add_text_field("id", STRING | STORED);
@@ -56,14 +48,9 @@ impl FulltextIndex {
             .try_into()
             .context("Failed to create index reader")?;
 
-        let writer = index
-            .writer(50_000_000)
-            .context("Failed to create index writer")?;
-
         Ok(Self {
             index,
             reader,
-            writer,
             f_id,
             f_title,
             f_abstract,
@@ -72,17 +59,25 @@ impl FulltextIndex {
         })
     }
 
+    fn writer(&self) -> Result<IndexWriter> {
+        self.index
+            .writer(50_000_000)
+            .context("Failed to create index writer")
+    }
+
     /// Add a paper to the index.
     pub fn add_paper(
-        &mut self,
+        &self,
         id: &str,
         title: &str,
         abstract_text: Option<&str>,
         authors: &[String],
         year: Option<u32>,
     ) -> Result<()> {
+        let mut writer = self.writer()?;
+
         // Delete existing document with same ID first
-        self.writer.delete_term(Term::from_field_text(self.f_id, id));
+        writer.delete_term(Term::from_field_text(self.f_id, id));
 
         let mut doc = doc!(
             self.f_id => id,
@@ -101,14 +96,15 @@ impl FulltextIndex {
             doc.add_i64(self.f_year, y as i64);
         }
 
-        self.writer.add_document(doc)
+        writer.add_document(doc)
             .context("Failed to add document")?;
+        writer.commit().context("Failed to commit")?;
+        self.reader.reload().context("Failed to reload reader")?;
         Ok(())
     }
 
-    /// Commit pending changes to make them searchable.
-    pub fn commit(&mut self) -> Result<()> {
-        self.writer.commit().context("Failed to commit")?;
+    /// Compatibility shim for older call sites. Writes now commit eagerly.
+    pub fn commit(&self) -> Result<()> {
         self.reader.reload().context("Failed to reload reader")?;
         Ok(())
     }
@@ -141,8 +137,11 @@ impl FulltextIndex {
     }
 
     /// Delete a paper by ID.
-    pub fn delete(&mut self, id: &str) -> Result<()> {
-        self.writer.delete_term(Term::from_field_text(self.f_id, id));
+    pub fn delete(&self, id: &str) -> Result<()> {
+        let mut writer = self.writer()?;
+        writer.delete_term(Term::from_field_text(self.f_id, id));
+        writer.commit().context("Failed to commit")?;
+        self.reader.reload().context("Failed to reload reader")?;
         Ok(())
     }
 
@@ -160,7 +159,7 @@ mod tests {
     #[test]
     fn test_fulltext_roundtrip() {
         let tmp = TempDir::new().unwrap();
-        let mut idx = FulltextIndex::create_or_open(tmp.path()).unwrap();
+        let idx = FulltextIndex::create_or_open(tmp.path()).unwrap();
 
         idx.add_paper(
             "arxiv:2301.00001",
@@ -178,8 +177,6 @@ mod tests {
             Some(2023),
         ).unwrap();
 
-        idx.commit().unwrap();
-
         // Search for holographic
         let results = idx.search("holographic entanglement", 10).unwrap();
         assert!(!results.is_empty());
@@ -194,7 +191,26 @@ mod tests {
 
         // Delete
         idx.delete("arxiv:2301.00001").unwrap();
-        idx.commit().unwrap();
         assert_eq!(idx.count(), 1);
+    }
+
+    #[test]
+    fn test_reopen_same_directory_without_holding_writer_lock() {
+        let tmp = TempDir::new().unwrap();
+        let idx1 = FulltextIndex::create_or_open(tmp.path()).unwrap();
+        let idx2 = FulltextIndex::create_or_open(tmp.path()).unwrap();
+
+        idx1.add_paper(
+            "arxiv:2401.00001",
+            "Shared Index Session Safety",
+            Some("Concurrent MCP sessions should be able to share one data directory."),
+            &["Test Author".to_string()],
+            Some(2024),
+        ).unwrap();
+
+        idx2.commit().unwrap();
+        let results = idx2.search("shared index session", 10).unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].0, "arxiv:2401.00001");
     }
 }
