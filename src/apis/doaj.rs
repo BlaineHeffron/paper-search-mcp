@@ -1,4 +1,4 @@
-use super::{PaperResult, PaperSource, SourceError};
+use super::{normalize_date_string, PaperResult, PaperSource, SearchOptions, SourceError};
 use async_trait::async_trait;
 use serde::Deserialize;
 
@@ -35,6 +35,7 @@ struct DoajBibJson {
     #[serde(rename = "abstract")]
     abstract_text: Option<String>,
     year: Option<String>,
+    created_date: Option<String>,
     identifier: Option<Vec<DoajIdentifier>>,
     link: Option<Vec<DoajLink>>,
 }
@@ -57,10 +58,14 @@ struct DoajLink {
 
 fn doaj_to_paper(r: &DoajResult) -> PaperResult {
     let bib = &r.bibjson;
-    let doi = bib.identifier.as_ref()
+    let doi = bib
+        .identifier
+        .as_ref()
         .and_then(|ids| ids.iter().find(|i| i.id_type.as_deref() == Some("doi")))
         .and_then(|i| i.id.clone());
-    let url = bib.link.as_ref()
+    let url = bib
+        .link
+        .as_ref()
         .and_then(|links| links.first())
         .and_then(|l| l.url.clone())
         .unwrap_or_default();
@@ -68,7 +73,9 @@ fn doaj_to_paper(r: &DoajResult) -> PaperResult {
     PaperResult {
         id: format!("doaj:{}", r.id.as_deref().unwrap_or("")),
         title: bib.title.clone().unwrap_or_default(),
-        authors: bib.author.as_ref()
+        authors: bib
+            .author
+            .as_ref()
             .map(|a| a.iter().filter_map(|a| a.name.clone()).collect())
             .unwrap_or_default(),
         abstract_text: bib.abstract_text.clone(),
@@ -77,34 +84,70 @@ fn doaj_to_paper(r: &DoajResult) -> PaperResult {
         doi,
         arxiv_id: None,
         url,
-        pdf_url: bib.link.as_ref()
-            .and_then(|links| links.iter().find(|l| l.link_type.as_deref() == Some("fulltext")))
+        pdf_url: bib
+            .link
+            .as_ref()
+            .and_then(|links| {
+                links
+                    .iter()
+                    .find(|l| l.link_type.as_deref() == Some("fulltext"))
+            })
             .and_then(|l| l.url.clone()),
         citation_count: None,
+        published_at: bib
+            .created_date
+            .as_deref()
+            .and_then(normalize_date_string)
+            .or_else(|| bib.year.as_deref().and_then(normalize_date_string)),
+        ranking_date: bib
+            .created_date
+            .as_deref()
+            .and_then(normalize_date_string)
+            .or_else(|| bib.year.as_deref().and_then(normalize_date_string)),
     }
 }
 
 #[async_trait]
 impl PaperSource for DoajClient {
-    fn name(&self) -> &str { "doaj" }
+    fn name(&self) -> &str {
+        "doaj"
+    }
 
-    async fn search(&self, query: &str, max_results: u32) -> Result<Vec<PaperResult>, SourceError> {
+    async fn search(
+        &self,
+        query: &str,
+        max_results: u32,
+        _options: &SearchOptions,
+    ) -> Result<Vec<PaperResult>, SourceError> {
         let url = format!("{}/{}", BASE_URL, urlencoded(query));
-        let resp: DoajResponse = self.client
+        let resp: DoajResponse = self
+            .client
             .get(&url)
             .query(&[("pageSize", &max_results.min(100).to_string())])
-            .send().await?.json().await?;
-        Ok(resp.results.unwrap_or_default().iter().map(doaj_to_paper).collect())
+            .send()
+            .await?
+            .json()
+            .await?;
+        Ok(resp
+            .results
+            .unwrap_or_default()
+            .iter()
+            .map(doaj_to_paper)
+            .collect())
     }
 
     async fn get_paper(&self, id: &str) -> Result<Option<PaperResult>, SourceError> {
         let doaj_id = id.strip_prefix("doaj:").unwrap_or(id);
-        let results = self.search(doaj_id, 1).await?;
+        let results = self.search(doaj_id, 1, &SearchOptions::default()).await?;
         Ok(results.into_iter().next())
     }
 
-    async fn get_citations(&self, _id: &str) -> Result<Vec<PaperResult>, SourceError> { Ok(vec![]) }
-    async fn get_references(&self, _id: &str) -> Result<Vec<PaperResult>, SourceError> { Ok(vec![]) }
+    async fn get_citations(&self, _id: &str) -> Result<Vec<PaperResult>, SourceError> {
+        Ok(vec![])
+    }
+    async fn get_references(&self, _id: &str) -> Result<Vec<PaperResult>, SourceError> {
+        Ok(vec![])
+    }
 }
 
 fn urlencoded(s: &str) -> String {

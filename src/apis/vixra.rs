@@ -1,4 +1,4 @@
-use super::{PaperResult, PaperSource, SourceError};
+use super::{normalize_date_string, PaperResult, PaperSource, SearchOptions, SourceError};
 use async_trait::async_trait;
 use futures::{stream, StreamExt};
 use scraper::{ElementRef, Html, Selector};
@@ -28,7 +28,12 @@ impl PaperSource for VixraClient {
         "vixra"
     }
 
-    async fn search(&self, query: &str, max_results: u32) -> Result<Vec<PaperResult>, SourceError> {
+    async fn search(
+        &self,
+        query: &str,
+        max_results: u32,
+        _options: &SearchOptions,
+    ) -> Result<Vec<PaperResult>, SourceError> {
         let archive_html = self.client.get(ARCHIVE_URL).send().await?.text().await?;
         let mut matches = search_archive_page(&archive_html, query);
         let month_paths = parse_month_paths(&archive_html);
@@ -191,6 +196,8 @@ fn parse_listing_entries(html: &str) -> Vec<PaperResult> {
             url: format!("{}/abs/{}", BASE_URL, vixra_id),
             pdf_url: Some(format!("{}/pdf/{}v1.pdf", BASE_URL, vixra_id)),
             citation_count: None,
+            published_at: year.and_then(|y| normalize_date_string(&y.to_string())),
+            ranking_date: year.and_then(|y| normalize_date_string(&y.to_string())),
         });
     }
 
@@ -228,6 +235,9 @@ fn parse_paper_page(html: &str, vixra_id: &str) -> Option<PaperResult> {
     let year = meta_content(&document, "citation_online_date")
         .and_then(|date| date.get(..4).and_then(|year| year.parse::<u32>().ok()))
         .or_else(|| year_from_vixra_id(vixra_id));
+    let published_at = meta_content(&document, "citation_online_date")
+        .and_then(|date| normalize_date_string(&date))
+        .or_else(|| year.and_then(|y| normalize_date_string(&y.to_string())));
     let pdf_url = meta_content(&document, "citation_pdf_url")
         .map(|url| url.replace("http://", "https://"))
         .or_else(|| Some(format!("{}/pdf/{}v1.pdf", BASE_URL, vixra_id)));
@@ -244,6 +254,8 @@ fn parse_paper_page(html: &str, vixra_id: &str) -> Option<PaperResult> {
         url: format!("{}/abs/{}", BASE_URL, vixra_id),
         pdf_url,
         citation_count: None,
+        published_at: published_at.clone(),
+        ranking_date: published_at,
     })
 }
 
@@ -399,6 +411,7 @@ mod tests {
         assert_eq!(papers[0].title, "A Table of Pisano Period Lengths");
         assert_eq!(papers[0].authors, vec!["Richard J. Mathar"]);
         assert_eq!(papers[0].year, Some(2026));
+        assert_eq!(papers[0].published_at.as_deref(), Some("2026-01-01"));
     }
 
     #[test]
@@ -425,6 +438,7 @@ mod tests {
         assert_eq!(paper.title, "A Table of Pisano Period Lengths");
         assert_eq!(paper.authors, vec!["Richard J. Mathar"]);
         assert_eq!(paper.year, Some(2026));
+        assert_eq!(paper.published_at.as_deref(), Some("2026-03-01"));
         assert_eq!(
             paper.pdf_url.as_deref(),
             Some("https://vixra.org/pdf/2603.0090v1.pdf")

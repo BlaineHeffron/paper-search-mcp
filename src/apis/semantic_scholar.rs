@@ -1,4 +1,4 @@
-use super::{PaperResult, PaperSource, SourceError};
+use super::{normalize_date_string, PaperResult, PaperSource, SearchOptions, SourceError};
 use async_trait::async_trait;
 use serde::Deserialize;
 
@@ -54,6 +54,7 @@ struct S2Paper {
     #[serde(rename = "abstract")]
     abstract_text: Option<String>,
     year: Option<u32>,
+    publication_date: Option<String>,
     external_ids: Option<S2ExternalIds>,
     citation_count: Option<u32>,
     url: Option<String>,
@@ -83,7 +84,9 @@ fn s2_to_paper(p: &S2Paper) -> PaperResult {
     PaperResult {
         id: format!("s2:{}", p.paper_id.as_deref().unwrap_or("")),
         title: p.title.clone().unwrap_or_default(),
-        authors: p.authors.as_ref()
+        authors: p
+            .authors
+            .as_ref()
             .map(|a| a.iter().filter_map(|a| a.name.clone()).collect())
             .unwrap_or_default(),
         abstract_text: p.abstract_text.clone(),
@@ -94,10 +97,19 @@ fn s2_to_paper(p: &S2Paper) -> PaperResult {
         url: p.url.clone().unwrap_or_default(),
         pdf_url: p.open_access_pdf.as_ref().and_then(|pdf| pdf.url.clone()),
         citation_count: p.citation_count,
+        published_at: p
+            .publication_date
+            .as_deref()
+            .and_then(normalize_date_string),
+        ranking_date: p
+            .publication_date
+            .as_deref()
+            .and_then(normalize_date_string),
     }
 }
 
-const FIELDS: &str = "title,authors,abstract,year,externalIds,citationCount,url,openAccessPdf";
+const FIELDS: &str =
+    "title,authors,abstract,year,publicationDate,externalIds,citationCount,url,openAccessPdf";
 
 #[async_trait]
 impl PaperSource for SemanticScholarClient {
@@ -105,26 +117,39 @@ impl PaperSource for SemanticScholarClient {
         "semantic_scholar"
     }
 
-    async fn search(&self, query: &str, max_results: u32) -> Result<Vec<PaperResult>, SourceError> {
+    async fn search(
+        &self,
+        query: &str,
+        max_results: u32,
+        _options: &SearchOptions,
+    ) -> Result<Vec<PaperResult>, SourceError> {
         let url = format!("{}/paper/search", BASE_URL);
         let limit = max_results.min(100).to_string();
-        let resp: S2SearchResponse = self.add_auth(
-            self.client.get(&url)
-                .query(&[
-                    ("query", query),
-                    ("limit", limit.as_str()),
-                    ("fields", FIELDS),
-                ])
-        ).send().await?.json().await?;
-        Ok(resp.data.unwrap_or_default().iter().map(s2_to_paper).collect())
+        let resp: S2SearchResponse = self
+            .add_auth(self.client.get(&url).query(&[
+                ("query", query),
+                ("limit", limit.as_str()),
+                ("fields", FIELDS),
+            ]))
+            .send()
+            .await?
+            .json()
+            .await?;
+        Ok(resp
+            .data
+            .unwrap_or_default()
+            .iter()
+            .map(s2_to_paper)
+            .collect())
     }
 
     async fn get_paper(&self, id: &str) -> Result<Option<PaperResult>, SourceError> {
         let paper_id = id.strip_prefix("s2:").unwrap_or(id);
         let url = format!("{}/paper/{}", BASE_URL, paper_id);
-        let resp = self.add_auth(
-            self.client.get(&url).query(&[("fields", FIELDS)])
-        ).send().await?;
+        let resp = self
+            .add_auth(self.client.get(&url).query(&[("fields", FIELDS)]))
+            .send()
+            .await?;
         if resp.status() == 404 {
             return Ok(None);
         }
@@ -136,11 +161,19 @@ impl PaperSource for SemanticScholarClient {
         let paper_id = id.strip_prefix("s2:").unwrap_or(id);
         let url = format!("{}/paper/{}/citations", BASE_URL, paper_id);
         let fields = format!("citingPaper.{}", FIELDS);
-        let resp: S2CitationResponse = self.add_auth(
-            self.client.get(&url)
-                .query(&[("fields", fields.as_str()), ("limit", "25")])
-        ).send().await?.json().await?;
-        let papers: Vec<PaperResult> = resp.data.unwrap_or_default()
+        let resp: S2CitationResponse = self
+            .add_auth(
+                self.client
+                    .get(&url)
+                    .query(&[("fields", fields.as_str()), ("limit", "25")]),
+            )
+            .send()
+            .await?
+            .json()
+            .await?;
+        let papers: Vec<PaperResult> = resp
+            .data
+            .unwrap_or_default()
             .iter()
             .filter_map(|edge| {
                 let val = edge.paper.get("citingPaper")?;
@@ -155,11 +188,19 @@ impl PaperSource for SemanticScholarClient {
         let paper_id = id.strip_prefix("s2:").unwrap_or(id);
         let url = format!("{}/paper/{}/references", BASE_URL, paper_id);
         let fields = format!("citedPaper.{}", FIELDS);
-        let resp: S2CitationResponse = self.add_auth(
-            self.client.get(&url)
-                .query(&[("fields", fields.as_str()), ("limit", "25")])
-        ).send().await?.json().await?;
-        let papers: Vec<PaperResult> = resp.data.unwrap_or_default()
+        let resp: S2CitationResponse = self
+            .add_auth(
+                self.client
+                    .get(&url)
+                    .query(&[("fields", fields.as_str()), ("limit", "25")]),
+            )
+            .send()
+            .await?
+            .json()
+            .await?;
+        let papers: Vec<PaperResult> = resp
+            .data
+            .unwrap_or_default()
             .iter()
             .filter_map(|edge| {
                 let val = edge.paper.get("citedPaper")?;

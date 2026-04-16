@@ -1,4 +1,4 @@
-use super::{PaperResult, PaperSource, SourceError};
+use super::{normalize_date_string, PaperResult, PaperSource, SearchOptions, SearchSort, SourceError};
 use async_trait::async_trait;
 use serde::Deserialize;
 
@@ -15,10 +15,7 @@ impl OpenAlexClient {
             None => "paper-search-mcp/0.1".to_string(),
         };
         Self {
-            client: reqwest::Client::builder()
-                .user_agent(ua)
-                .build()
-                .unwrap(),
+            client: reqwest::Client::builder().user_agent(ua).build().unwrap(),
         }
     }
 }
@@ -34,6 +31,7 @@ struct OAWork {
     title: Option<String>,
     authorships: Option<Vec<OAAuthorship>>,
     publication_year: Option<u32>,
+    publication_date: Option<String>,
     doi: Option<String>,
     open_access: Option<OAOpenAccess>,
     cited_by_count: Option<u32>,
@@ -57,8 +55,14 @@ fn oa_to_paper(w: &OAWork) -> PaperResult {
     PaperResult {
         id: format!("openalex:{}", w.id.as_deref().unwrap_or("")),
         title: w.title.clone().unwrap_or_default(),
-        authors: w.authorships.as_ref()
-            .map(|a| a.iter().filter_map(|a| a.author.display_name.clone()).collect())
+        authors: w
+            .authorships
+            .as_ref()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|a| a.author.display_name.clone())
+                    .collect()
+            })
             .unwrap_or_default(),
         abstract_text: None, // OpenAlex doesn't return abstracts in search by default
         year: w.publication_year,
@@ -68,32 +72,77 @@ fn oa_to_paper(w: &OAWork) -> PaperResult {
         url: w.id.clone().unwrap_or_default(),
         pdf_url: w.open_access.as_ref().and_then(|oa| oa.oa_url.clone()),
         citation_count: w.cited_by_count,
+        published_at: w
+            .publication_date
+            .as_deref()
+            .and_then(normalize_date_string),
+        ranking_date: w
+            .publication_date
+            .as_deref()
+            .and_then(normalize_date_string),
     }
 }
 
 #[async_trait]
 impl PaperSource for OpenAlexClient {
-    fn name(&self) -> &str { "openalex" }
+    fn name(&self) -> &str {
+        "openalex"
+    }
 
-    async fn search(&self, query: &str, max_results: u32) -> Result<Vec<PaperResult>, SourceError> {
+    async fn search(
+        &self,
+        query: &str,
+        max_results: u32,
+        options: &SearchOptions,
+    ) -> Result<Vec<PaperResult>, SourceError> {
         let per_page = max_results.min(200).to_string();
-        let resp: OAResponse = self.client
-            .get(&format!("{}/works", BASE_URL))
-            .query(&[
-                ("search", query),
-                ("per_page", per_page.as_str()),
-                ("select", "id,title,authorships,publication_year,doi,open_access,cited_by_count"),
-            ])
-            .send().await?.json().await?;
+        let mut request = self.client.get(format!("{}/works", BASE_URL)).query(&[
+            ("search", query),
+            ("per_page", per_page.as_str()),
+            (
+                "select",
+                "id,title,authorships,publication_year,publication_date,doi,open_access,cited_by_count",
+            ),
+        ]);
+
+        let mut filters = Vec::new();
+        if let Some(from) = options.date_from {
+            filters.push(format!("from_publication_date:{}", from.format("%Y-%m-%d")));
+        }
+        if let Some(to) = options.date_to {
+            filters.push(format!("to_publication_date:{}", to.format("%Y-%m-%d")));
+        }
+        if !filters.is_empty() {
+            request = request.query(&[("filter", filters.join(","))]);
+        }
+
+        match options.sort {
+            SearchSort::DateDesc => {
+                request = request.query(&[("sort", "publication_date:desc,relevance_score:desc")]);
+            }
+            SearchSort::DateAsc => {
+                request = request.query(&[("sort", "publication_date:asc,relevance_score:desc")]);
+            }
+            SearchSort::Hybrid => {
+                request = request.query(&[("sort", "publication_date:desc,relevance_score:desc")]);
+            }
+            SearchSort::Relevance => {}
+        }
+
+        let resp: OAResponse = request.send().await?.json().await?;
         Ok(resp.results.iter().map(oa_to_paper).collect())
     }
 
     async fn get_paper(&self, id: &str) -> Result<Option<PaperResult>, SourceError> {
         let oa_id = id.strip_prefix("openalex:").unwrap_or(id);
-        let resp = self.client
+        let resp = self
+            .client
             .get(&format!("{}/works/{}", BASE_URL, oa_id))
-            .send().await?;
-        if resp.status() == 404 { return Ok(None); }
+            .send()
+            .await?;
+        if resp.status() == 404 {
+            return Ok(None);
+        }
         let w: OAWork = resp.json().await?;
         Ok(Some(oa_to_paper(&w)))
     }
@@ -101,28 +150,42 @@ impl PaperSource for OpenAlexClient {
     async fn get_citations(&self, id: &str) -> Result<Vec<PaperResult>, SourceError> {
         let oa_id = id.strip_prefix("openalex:").unwrap_or(id);
         let filter = format!("cites:{}", oa_id);
-        let resp: OAResponse = self.client
+        let resp: OAResponse = self
+            .client
             .get(&format!("{}/works", BASE_URL))
             .query(&[
                 ("filter", filter.as_str()),
                 ("per_page", "25"),
-                ("select", "id,title,authorships,publication_year,doi,open_access,cited_by_count"),
+                (
+                    "select",
+                    "id,title,authorships,publication_year,doi,open_access,cited_by_count",
+                ),
             ])
-            .send().await?.json().await?;
+            .send()
+            .await?
+            .json()
+            .await?;
         Ok(resp.results.iter().map(oa_to_paper).collect())
     }
 
     async fn get_references(&self, id: &str) -> Result<Vec<PaperResult>, SourceError> {
         let oa_id = id.strip_prefix("openalex:").unwrap_or(id);
         let filter = format!("cited_by:{}", oa_id);
-        let resp: OAResponse = self.client
+        let resp: OAResponse = self
+            .client
             .get(&format!("{}/works", BASE_URL))
             .query(&[
                 ("filter", filter.as_str()),
                 ("per_page", "25"),
-                ("select", "id,title,authorships,publication_year,doi,open_access,cited_by_count"),
+                (
+                    "select",
+                    "id,title,authorships,publication_year,doi,open_access,cited_by_count",
+                ),
             ])
-            .send().await?.json().await?;
+            .send()
+            .await?
+            .json()
+            .await?;
         Ok(resp.results.iter().map(oa_to_paper).collect())
     }
 }

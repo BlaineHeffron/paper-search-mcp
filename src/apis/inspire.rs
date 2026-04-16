@@ -1,4 +1,4 @@
-use super::{PaperResult, PaperSource, SourceError};
+use super::{normalize_date_string, PaperResult, PaperSource, SearchOptions, SourceError};
 use async_trait::async_trait;
 use serde::Deserialize;
 
@@ -74,26 +74,42 @@ struct InspireUrl {
 
 fn hit_to_paper(hit: &InspireHit) -> PaperResult {
     let m = &hit.metadata;
-    let title = m.titles.as_ref()
+    let title = m
+        .titles
+        .as_ref()
         .and_then(|t| t.first())
         .map(|t| t.title.clone())
         .unwrap_or_default();
-    let authors = m.authors.as_ref()
+    let authors = m
+        .authors
+        .as_ref()
         .map(|a| a.iter().map(|a| a.full_name.clone()).collect())
         .unwrap_or_default();
-    let abstract_text = m.abstracts.as_ref()
+    let abstract_text = m
+        .abstracts
+        .as_ref()
         .and_then(|a| a.first())
         .map(|a| a.value.clone());
-    let doi = m.dois.as_ref()
+    let doi = m
+        .dois
+        .as_ref()
         .and_then(|d| d.first())
         .map(|d| d.value.clone());
-    let arxiv_id = m.arxiv_eprints.as_ref()
+    let arxiv_id = m
+        .arxiv_eprints
+        .as_ref()
         .and_then(|a| a.first())
         .map(|a| a.value.clone());
-    let year = m.earliest_date.as_ref()
+    let year = m
+        .earliest_date
+        .as_ref()
         .and_then(|d| d.get(..4))
         .and_then(|y| y.parse::<u32>().ok());
     let url = format!("https://inspirehep.net/literature/{}", hit.id);
+    let published_at = m
+        .earliest_date
+        .as_deref()
+        .and_then(normalize_date_string);
 
     PaperResult {
         id: format!("inspire:{}", hit.id),
@@ -107,6 +123,8 @@ fn hit_to_paper(hit: &InspireHit) -> PaperResult {
         url,
         pdf_url: None,
         citation_count: m.citation_count,
+        published_at: published_at.clone(),
+        ranking_date: published_at,
     }
 }
 
@@ -116,14 +134,23 @@ impl PaperSource for InspireClient {
         "inspire"
     }
 
-    async fn search(&self, query: &str, max_results: u32) -> Result<Vec<PaperResult>, SourceError> {
+    async fn search(
+        &self,
+        query: &str,
+        max_results: u32,
+        _options: &SearchOptions,
+    ) -> Result<Vec<PaperResult>, SourceError> {
         let size = max_results.to_string();
-        let resp: InspireResponse = self.client
+        let resp: InspireResponse = self
+            .client
             .get(BASE_URL)
             .query(&[
                 ("q", query),
                 ("size", size.as_str()),
-                ("fields", "titles,authors,abstracts,dois,arxiv_eprints,citation_count,urls,earliest_date"),
+                (
+                    "fields",
+                    "titles,authors,abstracts,dois,arxiv_eprints,citation_count,urls,earliest_date",
+                ),
             ])
             .send()
             .await?
@@ -146,12 +173,16 @@ impl PaperSource for InspireClient {
     async fn get_citations(&self, id: &str) -> Result<Vec<PaperResult>, SourceError> {
         let recid = id.strip_prefix("inspire:").unwrap_or(id);
         let q = format!("refersto:recid:{}", recid);
-        let resp: InspireResponse = self.client
+        let resp: InspireResponse = self
+            .client
             .get(BASE_URL)
             .query(&[
                 ("q", q.as_str()),
                 ("size", "25"),
-                ("fields", "titles,authors,abstracts,dois,arxiv_eprints,citation_count,urls,earliest_date"),
+                (
+                    "fields",
+                    "titles,authors,abstracts,dois,arxiv_eprints,citation_count,urls,earliest_date",
+                ),
             ])
             .send()
             .await?
@@ -163,9 +194,13 @@ impl PaperSource for InspireClient {
     async fn get_references(&self, id: &str) -> Result<Vec<PaperResult>, SourceError> {
         let recid = id.strip_prefix("inspire:").unwrap_or(id);
         let url = format!("{}/{}/references", BASE_URL, recid);
-        let resp: InspireResponse = self.client
+        let resp: InspireResponse = self
+            .client
             .get(&url)
-            .query(&[("fields", "titles,authors,abstracts,dois,arxiv_eprints,citation_count,urls,earliest_date")])
+            .query(&[(
+                "fields",
+                "titles,authors,abstracts,dois,arxiv_eprints,citation_count,urls,earliest_date",
+            )])
             .send()
             .await?
             .json()

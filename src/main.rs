@@ -1,11 +1,10 @@
-use std::sync::Arc;
 use rmcp::{
-    handler::server::tool::ToolRouter, handler::server::wrapper::Parameters,
-    model::*, tool, tool_handler, tool_router,
-    transport::stdio, ErrorData as McpError, ServerHandler, ServiceExt,
+    handler::server::tool::ToolRouter, handler::server::wrapper::Parameters, model::*, tool,
+    tool_handler, tool_router, transport::stdio, ErrorData as McpError, ServerHandler, ServiceExt,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 
@@ -16,6 +15,7 @@ mod index;
 mod search;
 
 use apis::PaperSource;
+use apis::{SearchOptions, SearchSort};
 use config::Config;
 use embed::specter;
 use index::LocalIndex;
@@ -30,6 +30,14 @@ struct SearchPapersParams {
     sources: Option<Vec<String>>,
     #[schemars(description = "Maximum results to return (default 10, max 100)")]
     max_results: Option<u32>,
+    #[schemars(
+        description = "Sort order: relevance (default), date_desc, date_asc, or hybrid"
+    )]
+    sort: Option<String>,
+    #[schemars(description = "Inclusive lower publication/submission date bound in YYYY-MM-DD format")]
+    date_from: Option<String>,
+    #[schemars(description = "Inclusive upper publication/submission date bound in YYYY-MM-DD format")]
+    date_to: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -133,17 +141,66 @@ impl PaperSearchServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Search papers across all enabled sources. Returns deduplicated, ranked results.")]
+    #[tool(
+        description = "Search papers across enabled sources with deduplication, date-aware filtering, and sorting. Supports sort=relevance|date_desc|date_asc|hybrid plus date_from/date_to in YYYY-MM-DD format."
+    )]
     async fn search_papers(
         &self,
         Parameters(params): Parameters<SearchPapersParams>,
     ) -> Result<CallToolResult, McpError> {
         let max = params.max_results.unwrap_or(10).min(100);
+        let sort = match params.sort.as_deref().unwrap_or("relevance") {
+            "relevance" => SearchSort::Relevance,
+            "date_desc" => SearchSort::DateDesc,
+            "date_asc" => SearchSort::DateAsc,
+            "hybrid" => SearchSort::Hybrid,
+            other => {
+                return Err(McpError::invalid_params(
+                    format!(
+                        "Invalid sort '{}'. Expected one of: relevance, date_desc, date_asc, hybrid",
+                        other
+                    ),
+                    None,
+                ))
+            }
+        };
+        let date_from = params
+            .date_from
+            .as_deref()
+            .map(|value| chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d"))
+            .transpose()
+            .map_err(|e| {
+                McpError::invalid_params(format!("Invalid date_from '{}': {}", params.date_from.unwrap_or_default(), e), None)
+            })?;
+        let date_to = params
+            .date_to
+            .as_deref()
+            .map(|value| chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d"))
+            .transpose()
+            .map_err(|e| {
+                McpError::invalid_params(format!("Invalid date_to '{}': {}", params.date_to.unwrap_or_default(), e), None)
+            })?;
+
+        if let (Some(from), Some(to)) = (date_from, date_to) {
+            if from > to {
+                return Err(McpError::invalid_params(
+                    "date_from must be on or before date_to".to_string(),
+                    None,
+                ));
+            }
+        }
+
+        let options = SearchOptions {
+            sort,
+            date_from,
+            date_to,
+        };
         let results = search::federated_search(
             &self.sources,
             &params.query,
             max,
             params.sources.as_deref(),
+            &options,
         )
         .await;
 
@@ -152,23 +209,36 @@ impl PaperSearchServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Get full metadata for a paper by ID (arxiv:ID, doi:ID, inspire:ID, s2:ID, etc.)")]
+    #[tool(
+        description = "Get full metadata for a paper by ID (arxiv:ID, doi:ID, inspire:ID, s2:ID, etc.)"
+    )]
     async fn get_paper(
         &self,
         Parameters(params): Parameters<GetPaperParams>,
     ) -> Result<CallToolResult, McpError> {
         let id = &params.id;
         let target_source = params.source.as_deref().or_else(|| {
-            if id.starts_with("arxiv:") { Some("arxiv") }
-            else if id.starts_with("inspire:") { Some("inspire") }
-            else if id.starts_with("s2:") { Some("semantic_scholar") }
-            else if id.starts_with("ads:") { Some("ads") }
-            else if id.starts_with("doi:") { Some("crossref") }
-            else if id.starts_with("pmid:") { Some("europepmc") }
-            else if id.starts_with("doaj:") { Some("doaj") }
-            else if id.starts_with("vixra:") { Some("vixra") }
-            else if id.starts_with("openalex:") { Some("openalex") }
-            else { None }
+            if id.starts_with("arxiv:") {
+                Some("arxiv")
+            } else if id.starts_with("inspire:") {
+                Some("inspire")
+            } else if id.starts_with("s2:") {
+                Some("semantic_scholar")
+            } else if id.starts_with("ads:") {
+                Some("ads")
+            } else if id.starts_with("doi:") {
+                Some("crossref")
+            } else if id.starts_with("pmid:") {
+                Some("europepmc")
+            } else if id.starts_with("doaj:") {
+                Some("doaj")
+            } else if id.starts_with("vixra:") {
+                Some("vixra")
+            } else if id.starts_with("openalex:") {
+                Some("openalex")
+            } else {
+                None
+            }
         });
 
         // Check local index first
@@ -201,9 +271,10 @@ impl PaperSearchServer {
             }
         }
 
-        Ok(CallToolResult::success(vec![Content::text(
-            format!("Paper not found: {}", id),
-        )]))
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Paper not found: {}",
+            id
+        ))]))
     }
 
     #[tool(description = "Get papers that cite a given paper")]
@@ -211,9 +282,11 @@ impl PaperSearchServer {
         &self,
         Parameters(params): Parameters<RelationParams>,
     ) -> Result<CallToolResult, McpError> {
-        let results = self.query_relation(&params.id, params.source.as_deref(), |src, id| {
-            Box::pin(src.get_citations(id))
-        }).await;
+        let results = self
+            .query_relation(&params.id, params.source.as_deref(), |src, id| {
+                Box::pin(src.get_citations(id))
+            })
+            .await;
         let json = serde_json::to_string_pretty(&results)
             .map_err(|e| McpError::internal_error(format!("{}", e), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
@@ -224,15 +297,19 @@ impl PaperSearchServer {
         &self,
         Parameters(params): Parameters<RelationParams>,
     ) -> Result<CallToolResult, McpError> {
-        let results = self.query_relation(&params.id, params.source.as_deref(), |src, id| {
-            Box::pin(src.get_references(id))
-        }).await;
+        let results = self
+            .query_relation(&params.id, params.source.as_deref(), |src, id| {
+                Box::pin(src.get_references(id))
+            })
+            .await;
         let json = serde_json::to_string_pretty(&results)
             .map_err(|e| McpError::internal_error(format!("{}", e), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Search locally indexed papers using keyword, vector, or hybrid search. Mode: 'hybrid' (default), 'keyword', 'vector'")]
+    #[tool(
+        description = "Search locally indexed papers using keyword, vector, or hybrid search. Mode: 'hybrid' (default), 'keyword', 'vector'"
+    )]
     async fn search_local(
         &self,
         Parameters(params): Parameters<SearchLocalParams>,
@@ -244,23 +321,37 @@ impl PaperSearchServer {
         let embedding = specter::mock_embedding(&params.query);
 
         let search_mode = match mode_str {
-            "keyword" => index::hybrid::SearchMode::KeywordOnly { query: &params.query },
-            "vector" => index::hybrid::SearchMode::VectorOnly { embedding: &embedding },
-            _ => index::hybrid::SearchMode::Hybrid { query: &params.query, embedding: &embedding },
+            "keyword" => index::hybrid::SearchMode::KeywordOnly {
+                query: &params.query,
+            },
+            "vector" => index::hybrid::SearchMode::VectorOnly {
+                embedding: &embedding,
+            },
+            _ => index::hybrid::SearchMode::Hybrid {
+                query: &params.query,
+                embedding: &embedding,
+            },
         };
 
-        let scored = idx.search(search_mode, limit).await
+        let scored = idx
+            .search(search_mode, limit)
+            .await
             .map_err(|e| McpError::internal_error(format!("Search failed: {}", e), None))?;
 
-        let papers = index::hybrid::resolve_results(&idx.vector, &scored).await
-            .map_err(|e| McpError::internal_error(format!("Failed to resolve results: {}", e), None))?;
+        let papers = index::hybrid::resolve_results(&idx.vector, &scored)
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("Failed to resolve results: {}", e), None)
+            })?;
 
         let json = serde_json::to_string_pretty(&papers)
             .map_err(|e| McpError::internal_error(format!("{}", e), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Search for semantically similar papers in the local index using SPECTER2 embeddings")]
+    #[tool(
+        description = "Search for semantically similar papers in the local index using SPECTER2 embeddings"
+    )]
     async fn search_similar(
         &self,
         Parameters(params): Parameters<SearchSimilarParams>,
@@ -269,7 +360,10 @@ impl PaperSearchServer {
         let idx = self.local_index.lock().await;
         let embedding = specter::mock_embedding(&params.query);
 
-        let results = idx.vector.search_similar(&embedding, limit).await
+        let results = idx
+            .vector
+            .search_similar(&embedding, limit)
+            .await
             .map_err(|e| McpError::internal_error(format!("Vector search failed: {}", e), None))?;
 
         let mut papers = Vec::new();
@@ -284,7 +378,9 @@ impl PaperSearchServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Fetch a paper from an API source and add it to the local index with embedding")]
+    #[tool(
+        description = "Fetch a paper from an API source and add it to the local index with embedding"
+    )]
     async fn index_paper(
         &self,
         Parameters(params): Parameters<IndexPaperParams>,
@@ -297,7 +393,10 @@ impl PaperSearchServer {
                 }
             }
             match src.get_paper(&params.id).await {
-                Ok(Some(p)) => { paper = Some(p); break; }
+                Ok(Some(p)) => {
+                    paper = Some(p);
+                    break;
+                }
                 Ok(None) => continue,
                 Err(e) => {
                     tracing::warn!("Source {} failed: {}", src.name(), e);
@@ -311,12 +410,14 @@ impl PaperSearchServer {
         })?;
 
         let mut idx = self.local_index.lock().await;
-        idx.index_paper_mock(&paper).await
+        idx.index_paper_mock(&paper)
+            .await
             .map_err(|e| McpError::internal_error(format!("Indexing failed: {}", e), None))?;
 
-        Ok(CallToolResult::success(vec![Content::text(
-            format!("Indexed: {} - {}", paper.id, paper.title),
-        )]))
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Indexed: {} - {}",
+            paper.id, paper.title
+        ))]))
     }
 
     #[tool(description = "Search for papers and bulk-index all results into the local index")]
@@ -327,12 +428,15 @@ impl PaperSearchServer {
         let max = params.max_results.unwrap_or(10).min(50);
         let source_filter = params.source.map(|s| vec![s]);
 
-        let papers = search::federated_search(
-            &self.sources,
-            &params.query,
-            max,
-            source_filter.as_deref(),
-        ).await;
+        let papers =
+            search::federated_search(
+                &self.sources,
+                &params.query,
+                max,
+                source_filter.as_deref(),
+                &SearchOptions::default(),
+            )
+            .await;
 
         let mut idx = self.local_index.lock().await;
         let mut indexed = 0;
@@ -342,9 +446,12 @@ impl PaperSearchServer {
             }
         }
 
-        Ok(CallToolResult::success(vec![Content::text(
-            format!("Indexed {} of {} papers from query: {}", indexed, papers.len(), params.query),
-        )]))
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Indexed {} of {} papers from query: {}",
+            indexed,
+            papers.len(),
+            params.query
+        ))]))
     }
 
     #[tool(description = "Find open-access PDF URL for a paper via Unpaywall (requires DOI)")]
@@ -360,13 +467,18 @@ impl PaperSearchServer {
         })?;
 
         match client.get_pdf_url(&params.doi).await {
-            Ok(Some(url)) => Ok(CallToolResult::success(vec![Content::text(
-                format!("PDF URL: {}", url),
-            )])),
-            Ok(None) => Ok(CallToolResult::success(vec![Content::text(
-                format!("No open-access PDF found for DOI: {}", params.doi),
-            )])),
-            Err(e) => Err(McpError::internal_error(format!("Unpaywall error: {}", e), None)),
+            Ok(Some(url)) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "PDF URL: {}",
+                url
+            ))])),
+            Ok(None) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "No open-access PDF found for DOI: {}",
+                params.doi
+            ))])),
+            Err(e) => Err(McpError::internal_error(
+                format!("Unpaywall error: {}", e),
+                None,
+            )),
         }
     }
 }
@@ -384,7 +496,11 @@ impl PaperSearchServer {
             &'a Arc<dyn PaperSource>,
             &'a str,
         ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<Vec<apis::PaperResult>, apis::SourceError>> + Send + 'a>,
+            Box<
+                dyn std::future::Future<Output = Result<Vec<apis::PaperResult>, apis::SourceError>>
+                    + Send
+                    + 'a,
+            >,
         >,
     {
         for src in self.sources.iter() {

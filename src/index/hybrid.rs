@@ -1,9 +1,9 @@
-use std::collections::HashMap;
 use anyhow::Result;
+use std::collections::HashMap;
 
-use crate::apis::PaperResult;
 use super::fulltext::FulltextIndex;
 use super::vectordb::VectorStore;
+use crate::apis::PaperResult;
 
 /// RRF constant (standard value from the original paper).
 const RRF_K: f32 = 60.0;
@@ -15,7 +15,10 @@ pub enum SearchMode<'a> {
     /// Only vector similarity search.
     VectorOnly { embedding: &'a [f32] },
     /// Hybrid: BM25 + vector with reciprocal rank fusion.
-    Hybrid { query: &'a str, embedding: &'a [f32] },
+    Hybrid {
+        query: &'a str,
+        embedding: &'a [f32],
+    },
 }
 
 /// Perform hybrid search combining Tantivy BM25 and LanceDB vector results
@@ -92,7 +95,11 @@ pub async fn hybrid_search(
                     vector_distance: acc.vector_distance,
                 })
                 .collect();
-            results.sort_by(|a, b| b.rrf_score.partial_cmp(&a.rrf_score).unwrap_or(std::cmp::Ordering::Equal));
+            results.sort_by(|a, b| {
+                b.rrf_score
+                    .partial_cmp(&a.rrf_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             results.truncate(limit);
             Ok(results)
         }
@@ -150,6 +157,8 @@ mod tests {
             url: "https://example.com".to_string(),
             pdf_url: None,
             citation_count: None,
+            published_at: Some("2024-01-01".to_string()),
+            ranking_date: Some("2024-01-01".to_string()),
         }
     }
 
@@ -169,13 +178,15 @@ mod tests {
 
         for paper in &papers {
             let emb = mock_embedding(&paper.title);
-            ft_index.add_paper(
-                &paper.id,
-                &paper.title,
-                paper.abstract_text.as_deref(),
-                &paper.authors,
-                paper.year,
-            ).unwrap();
+            ft_index
+                .add_paper(
+                    &paper.id,
+                    &paper.title,
+                    paper.abstract_text.as_deref(),
+                    &paper.authors,
+                    paper.year,
+                )
+                .unwrap();
             vec_store.add_paper(paper, &emb).await.unwrap();
         }
         ft_index.commit().unwrap();
@@ -184,9 +195,13 @@ mod tests {
         let results = hybrid_search(
             &ft_index,
             &vec_store,
-            SearchMode::KeywordOnly { query: "holographic entanglement" },
+            SearchMode::KeywordOnly {
+                query: "holographic entanglement",
+            },
             10,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert!(!results.is_empty());
         assert_eq!(results[0].id, "p1");
         assert!(results[0].bm25_score.is_some());
@@ -196,9 +211,13 @@ mod tests {
         let results = hybrid_search(
             &ft_index,
             &vec_store,
-            SearchMode::VectorOnly { embedding: &query_emb },
+            SearchMode::VectorOnly {
+                embedding: &query_emb,
+            },
             10,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert!(!results.is_empty());
 
         // Hybrid search
@@ -210,7 +229,9 @@ mod tests {
                 embedding: &query_emb,
             },
             10,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert!(!results.is_empty());
         // Paper appearing in both rankings should have higher RRF score
         assert!(results[0].rrf_score > 0.0);

@@ -1,4 +1,4 @@
-use super::{PaperResult, PaperSource, SourceError};
+use super::{normalize_date_string, PaperResult, PaperSource, SearchOptions, SourceError};
 use async_trait::async_trait;
 use serde::Deserialize;
 
@@ -37,6 +37,7 @@ struct AdsDoc {
     #[serde(rename = "abstract")]
     abstract_text: Option<String>,
     year: Option<String>,
+    date: Option<String>,
     doi: Option<Vec<String>>,
     citation_count: Option<u32>,
 }
@@ -45,7 +46,12 @@ fn doc_to_paper(doc: &AdsDoc) -> PaperResult {
     let bibcode = doc.bibcode.clone().unwrap_or_default();
     PaperResult {
         id: format!("ads:{}", bibcode),
-        title: doc.title.as_ref().and_then(|t| t.first()).cloned().unwrap_or_default(),
+        title: doc
+            .title
+            .as_ref()
+            .and_then(|t| t.first())
+            .cloned()
+            .unwrap_or_default(),
         authors: doc.author.clone().unwrap_or_default(),
         abstract_text: doc.abstract_text.clone(),
         year: doc.year.as_ref().and_then(|y| y.parse::<u32>().ok()),
@@ -55,68 +61,105 @@ fn doc_to_paper(doc: &AdsDoc) -> PaperResult {
         url: format!("https://ui.adsabs.harvard.edu/abs/{}", bibcode),
         pdf_url: None,
         citation_count: doc.citation_count,
+        published_at: doc.date.as_deref().and_then(normalize_date_string),
+        ranking_date: doc.date.as_deref().and_then(normalize_date_string),
     }
 }
 
 #[async_trait]
 impl PaperSource for AdsClient {
-    fn name(&self) -> &str { "ads" }
+    fn name(&self) -> &str {
+        "ads"
+    }
 
-    async fn search(&self, query: &str, max_results: u32) -> Result<Vec<PaperResult>, SourceError> {
+    async fn search(
+        &self,
+        query: &str,
+        max_results: u32,
+        _options: &SearchOptions,
+    ) -> Result<Vec<PaperResult>, SourceError> {
         let rows = max_results.min(200).to_string();
-        let resp: AdsResponse = self.client
+        let resp: AdsResponse = self
+            .client
             .get(&format!("{}/search/query", BASE_URL))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .query(&[
                 ("q", query),
-                ("fl", "bibcode,title,author,abstract,year,doi,citation_count"),
+                (
+                    "fl",
+                    "bibcode,title,author,abstract,year,date,doi,citation_count",
+                ),
                 ("rows", rows.as_str()),
             ])
-            .send().await?.json().await?;
+            .send()
+            .await?
+            .json()
+            .await?;
         Ok(resp.response.docs.iter().map(doc_to_paper).collect())
     }
 
     async fn get_paper(&self, id: &str) -> Result<Option<PaperResult>, SourceError> {
         let bibcode = id.strip_prefix("ads:").unwrap_or(id);
         let q = format!("bibcode:{}", bibcode);
-        let resp: AdsResponse = self.client
+        let resp: AdsResponse = self
+            .client
             .get(&format!("{}/search/query", BASE_URL))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .query(&[
                 ("q", q.as_str()),
-                ("fl", "bibcode,title,author,abstract,year,doi,citation_count"),
+                (
+                    "fl",
+                    "bibcode,title,author,abstract,year,date,doi,citation_count",
+                ),
             ])
-            .send().await?.json().await?;
+            .send()
+            .await?
+            .json()
+            .await?;
         Ok(resp.response.docs.first().map(doc_to_paper))
     }
 
     async fn get_citations(&self, id: &str) -> Result<Vec<PaperResult>, SourceError> {
         let bibcode = id.strip_prefix("ads:").unwrap_or(id);
         let q = format!("citations(bibcode:{})", bibcode);
-        let resp: AdsResponse = self.client
+        let resp: AdsResponse = self
+            .client
             .get(&format!("{}/search/query", BASE_URL))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .query(&[
                 ("q", q.as_str()),
-                ("fl", "bibcode,title,author,abstract,year,doi,citation_count"),
+                (
+                    "fl",
+                    "bibcode,title,author,abstract,year,date,doi,citation_count",
+                ),
                 ("rows", "25"),
             ])
-            .send().await?.json().await?;
+            .send()
+            .await?
+            .json()
+            .await?;
         Ok(resp.response.docs.iter().map(doc_to_paper).collect())
     }
 
     async fn get_references(&self, id: &str) -> Result<Vec<PaperResult>, SourceError> {
         let bibcode = id.strip_prefix("ads:").unwrap_or(id);
         let q = format!("references(bibcode:{})", bibcode);
-        let resp: AdsResponse = self.client
+        let resp: AdsResponse = self
+            .client
             .get(&format!("{}/search/query", BASE_URL))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .query(&[
                 ("q", q.as_str()),
-                ("fl", "bibcode,title,author,abstract,year,doi,citation_count"),
+                (
+                    "fl",
+                    "bibcode,title,author,abstract,year,date,doi,citation_count",
+                ),
                 ("rows", "25"),
             ])
-            .send().await?.json().await?;
+            .send()
+            .await?
+            .json()
+            .await?;
         Ok(resp.response.docs.iter().map(doc_to_paper).collect())
     }
 }

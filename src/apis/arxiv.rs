@@ -1,5 +1,6 @@
-use super::{PaperResult, PaperSource, SourceError};
+use super::{normalize_date_string, PaperResult, PaperSource, SearchOptions, SearchSort, SourceError};
 use async_trait::async_trait;
+use chrono::NaiveDate;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
@@ -26,14 +27,35 @@ impl PaperSource for ArxivClient {
         "arxiv"
     }
 
-    async fn search(&self, query: &str, max_results: u32) -> Result<Vec<PaperResult>, SourceError> {
-        let url = format!(
-            "{}?search_query=all:{}&start=0&max_results={}&sortBy=relevance&sortOrder=descending",
-            BASE_URL,
-            urlencoded(query),
-            max_results
-        );
-        let resp = self.client.get(&url).send().await?.text().await?;
+    async fn search(
+        &self,
+        query: &str,
+        max_results: u32,
+        options: &SearchOptions,
+    ) -> Result<Vec<PaperResult>, SourceError> {
+        let mut search_query = format!("all:{}", query);
+        if let Some(date_clause) = arxiv_date_clause(options.date_from, options.date_to) {
+            search_query = format!("({}) AND {}", search_query, date_clause);
+        }
+        let (sort_by, sort_order) = match options.sort {
+            SearchSort::DateAsc => ("submittedDate", "ascending"),
+            SearchSort::DateDesc => ("submittedDate", "descending"),
+            _ => ("relevance", "descending"),
+        };
+        let resp = self
+            .client
+            .get(BASE_URL)
+            .query(&[
+                ("search_query", search_query.as_str()),
+                ("start", "0"),
+                ("max_results", &max_results.to_string()),
+                ("sortBy", sort_by),
+                ("sortOrder", sort_order),
+            ])
+            .send()
+            .await?
+            .text()
+            .await?;
         // Respect rate limit: 1 req / 3s
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         parse_atom_feed(&resp)
@@ -56,10 +78,21 @@ impl PaperSource for ArxivClient {
     }
 }
 
-fn urlencoded(s: &str) -> String {
-    s.replace(' ', "+")
-        .replace(':', "%3A")
-        .replace('/', "%2F")
+fn arxiv_date_clause(date_from: Option<NaiveDate>, date_to: Option<NaiveDate>) -> Option<String> {
+    let from = date_from
+        .unwrap_or_else(|| NaiveDate::from_ymd_opt(1900, 1, 1).unwrap())
+        .format("%Y%m%d")
+        .to_string();
+    let to = date_to
+        .unwrap_or_else(|| NaiveDate::from_ymd_opt(2100, 12, 31).unwrap())
+        .format("%Y%m%d")
+        .to_string();
+
+    if date_from.is_none() && date_to.is_none() {
+        None
+    } else {
+        Some(format!("submittedDate:[{}0000 TO {}2359]", from, to))
+    }
 }
 
 fn parse_atom_feed(xml: &str) -> Result<Vec<PaperResult>, SourceError> {
@@ -161,15 +194,9 @@ fn parse_atom_feed(xml: &str) -> Result<Vec<PaperResult>, SourceError> {
                 if tag == "entry" && in_entry {
                     in_entry = false;
                     // Extract arXiv ID from URL
-                    let id = arxiv_id
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(&arxiv_id)
-                        .to_string();
+                    let id = arxiv_id.rsplit('/').next().unwrap_or(&arxiv_id).to_string();
                     if !id.is_empty() && !title.trim().is_empty() {
-                        let year = published
-                            .get(..4)
-                            .and_then(|y| y.parse::<u32>().ok());
+                        let year = published.get(..4).and_then(|y| y.parse::<u32>().ok());
                         papers.push(PaperResult {
                             id: format!("arxiv:{}", id),
                             title: title.trim().replace('\n', " "),
@@ -194,6 +221,8 @@ fn parse_atom_feed(xml: &str) -> Result<Vec<PaperResult>, SourceError> {
                                 Some(link_pdf.clone())
                             },
                             citation_count: None,
+                            published_at: normalize_date_string(&published),
+                            ranking_date: normalize_date_string(&published),
                         });
                     }
                 } else if tag == "author" && in_author {
@@ -242,6 +271,7 @@ mod tests {
         assert!(p.title.contains("AdS/CFT"));
         assert_eq!(p.authors.len(), 2);
         assert_eq!(p.year, Some(2023));
+        assert_eq!(p.published_at.as_deref(), Some("2023-01-15"));
         assert!(p.pdf_url.is_some());
     }
 }

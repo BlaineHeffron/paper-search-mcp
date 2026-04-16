@@ -1,14 +1,14 @@
-use std::path::Path;
-use std::sync::Arc;
 use anyhow::{Context, Result};
+use arrow_array::Array;
 use arrow_array::{
     types::Float32Type, FixedSizeListArray, Int32Array, RecordBatch, RecordBatchIterator,
     StringArray,
 };
-use arrow_array::Array;
 use arrow_schema::{DataType, Field, Schema};
 use futures::stream::StreamExt;
 use lancedb::query::{ExecutableQuery, QueryBase};
+use std::path::Path;
+use std::sync::Arc;
 
 use crate::apis::PaperResult;
 use crate::embed::specter::EMBEDDING_DIMENSION;
@@ -48,8 +48,7 @@ fn make_schema() -> Arc<Schema> {
 impl VectorStore {
     /// Create or open a LanceDB database at the given path.
     pub async fn create_or_open(path: &Path) -> Result<Self> {
-        std::fs::create_dir_all(path)
-            .context("Failed to create LanceDB directory")?;
+        std::fs::create_dir_all(path).context("Failed to create LanceDB directory")?;
 
         let db = lancedb::connect(path.to_str().unwrap())
             .execute()
@@ -59,7 +58,10 @@ impl VectorStore {
         let schema = make_schema();
 
         // Create table if it doesn't exist
-        let tables = db.table_names().execute().await
+        let tables = db
+            .table_names()
+            .execute()
+            .await
             .context("Failed to list tables")?;
         if !tables.contains(&TABLE_NAME.to_string()) {
             db.create_empty_table(TABLE_NAME, schema.clone())
@@ -99,7 +101,9 @@ impl VectorStore {
                 Arc::new(StringArray::from(vec![paper.arxiv_id.as_deref()])),
                 Arc::new(StringArray::from(vec![Some(paper.url.as_str())])),
                 Arc::new(StringArray::from(vec![paper.pdf_url.as_deref()])),
-                Arc::new(Int32Array::from(vec![paper.citation_count.map(|c| c as i32)])),
+                Arc::new(Int32Array::from(vec![paper
+                    .citation_count
+                    .map(|c| c as i32)])),
                 Arc::new(
                     FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
                         std::iter::once(Some(embedding.iter().map(|&v| Some(v)))),
@@ -192,10 +196,7 @@ impl VectorStore {
     /// Get the total number of papers in the store.
     pub async fn count(&self) -> Result<usize> {
         let table = self.table().await?;
-        table
-            .count_rows(None)
-            .await
-            .context("Failed to count rows")
+        table.count_rows(None).await.context("Failed to count rows")
     }
 }
 
@@ -219,7 +220,13 @@ fn batch_row_to_paper(batch: &RecordBatch, row: usize) -> Result<PaperResult> {
             .column_by_name(name)?
             .as_any()
             .downcast_ref::<Int32Array>()
-            .and_then(|a| if a.is_null(row) { None } else { Some(a.value(row)) })
+            .and_then(|a| {
+                if a.is_null(row) {
+                    None
+                } else {
+                    Some(a.value(row))
+                }
+            })
     };
 
     let authors: Vec<String> = get_str("authors_json")
@@ -238,6 +245,8 @@ fn batch_row_to_paper(batch: &RecordBatch, row: usize) -> Result<PaperResult> {
         url: get_str("url").unwrap_or_default(),
         pdf_url: get_str("pdf_url"),
         citation_count: get_i32("citation_count").map(|c| c as u32),
+        published_at: None,
+        ranking_date: None,
     })
 }
 
@@ -260,6 +269,8 @@ mod tests {
             url: "https://example.com".to_string(),
             pdf_url: None,
             citation_count: Some(10),
+            published_at: Some("2024-01-15".to_string()),
+            ranking_date: Some("2024-01-15".to_string()),
         }
     }
 
