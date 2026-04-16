@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
 
 pub const EMBEDDING_DIMENSION: usize = 768;
 
@@ -29,22 +29,31 @@ pub async fn download_model(model_dir: &Path) -> Result<PathBuf> {
         return Ok(model_path);
     }
 
-    std::fs::create_dir_all(model_dir)
-        .context("Failed to create model directory")?;
+    std::fs::create_dir_all(model_dir).context("Failed to create model directory")?;
 
     let url = "https://huggingface.co/allenai/specter2/resolve/main/onnx/model.onnx";
     tracing::info!("Downloading SPECTER2 model from {}", url);
 
     let client = reqwest::Client::new();
-    let resp = client.get(url).send().await
+    let resp = client
+        .get(url)
+        .send()
+        .await
         .context("Failed to download SPECTER2 model")?;
-    anyhow::ensure!(resp.status().is_success(), "Download failed with status: {}", resp.status());
+    anyhow::ensure!(
+        resp.status().is_success(),
+        "Download failed with status: {}",
+        resp.status()
+    );
 
     let bytes = resp.bytes().await.context("Failed to read model bytes")?;
-    std::fs::write(&model_path, &bytes)
-        .context("Failed to write model file")?;
+    std::fs::write(&model_path, &bytes).context("Failed to write model file")?;
 
-    tracing::info!("SPECTER2 model saved to {:?} ({} bytes)", model_path, bytes.len());
+    tracing::info!(
+        "SPECTER2 model saved to {:?} ({} bytes)",
+        model_path,
+        bytes.len()
+    );
     Ok(model_path)
 }
 
@@ -69,7 +78,11 @@ mod onnx_impl {
         /// Create a new embedder loading the ONNX model and tokenizer.
         pub fn new(model_dir: &Path) -> Result<Self> {
             let model_path = model_dir.join("specter2.onnx");
-            anyhow::ensure!(model_path.exists(), "ONNX model not found at {:?}. Run download_model() first.", model_path);
+            anyhow::ensure!(
+                model_path.exists(),
+                "ONNX model not found at {:?}. Run download_model() first.",
+                model_path
+            );
 
             let session = ort::session::Session::builder()
                 .context("Failed to create ONNX session builder")?
@@ -101,7 +114,9 @@ mod onnx_impl {
 
         /// Embed raw text. Returns a 768-dimensional f32 vector.
         pub fn embed_text(&mut self, text: &str) -> Result<Vec<f32>> {
-            let encoding = self.tokenizer.encode(text, true)
+            let encoding = self
+                .tokenizer
+                .encode(text, true)
                 .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
 
             let ids = encoding.get_ids();
@@ -111,18 +126,23 @@ mod onnx_impl {
             let token_ids: Vec<i64> = ids[..len].iter().map(|&x| x as i64).collect();
             let attention_mask: Vec<i64> = mask[..len].iter().map(|&x| x as i64).collect();
 
-            let input_ids = ort::value::Tensor::from_array(([1, len], token_ids.into_boxed_slice()))
-                .context("Failed to create input_ids tensor")?;
-            let attn_mask = ort::value::Tensor::from_array(([1, len], attention_mask.into_boxed_slice()))
-                .context("Failed to create attention_mask tensor")?;
+            let input_ids =
+                ort::value::Tensor::from_array(([1, len], token_ids.into_boxed_slice()))
+                    .context("Failed to create input_ids tensor")?;
+            let attn_mask =
+                ort::value::Tensor::from_array(([1, len], attention_mask.into_boxed_slice()))
+                    .context("Failed to create attention_mask tensor")?;
 
-            let outputs = self.session.run(ort::inputs![
-                "input_ids" => input_ids,
-                "attention_mask" => attn_mask
-            ])
-            .context("ONNX inference failed")?;
+            let outputs = self
+                .session
+                .run(ort::inputs![
+                    "input_ids" => input_ids,
+                    "attention_mask" => attn_mask
+                ])
+                .context("ONNX inference failed")?;
 
-            let (shape, data) = outputs[0].try_extract_tensor::<f32>()
+            let (shape, data) = outputs[0]
+                .try_extract_tensor::<f32>()
                 .context("Failed to extract output tensor")?;
 
             let embedding = if shape.len() == 3 {

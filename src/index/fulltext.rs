@@ -1,11 +1,8 @@
-use std::path::Path;
 use anyhow::{Context, Result};
+use std::path::Path;
 use tantivy::{
-    collector::TopDocs,
-    doc,
-    query::QueryParser,
-    schema::*,
-    Index, IndexReader, IndexWriter, ReloadPolicy, Term,
+    collector::TopDocs, doc, query::QueryParser, schema::*, Index, IndexReader, IndexWriter,
+    ReloadPolicy, Term,
 };
 
 /// Tantivy-based BM25 full-text search index for papers.
@@ -23,24 +20,21 @@ pub struct FulltextIndex {
 impl FulltextIndex {
     /// Create or open a Tantivy index at the given directory.
     pub fn create_or_open(path: &Path) -> Result<Self> {
-        std::fs::create_dir_all(path)
-            .context("Failed to create tantivy index directory")?;
+        std::fs::create_dir_all(path).context("Failed to create tantivy index directory")?;
 
         let mut schema_builder = Schema::builder();
         let f_id = schema_builder.add_text_field("id", STRING | STORED);
         let f_title = schema_builder.add_text_field("title", TEXT | STORED);
         let f_abstract = schema_builder.add_text_field("abstract_text", TEXT);
         let f_authors = schema_builder.add_text_field("authors", TEXT);
-        let f_year = schema_builder.add_i64_field(
-            "year",
-            NumericOptions::default().set_stored().set_indexed(),
-        );
+        let f_year = schema_builder
+            .add_i64_field("year", NumericOptions::default().set_stored().set_indexed());
         let schema = schema_builder.build();
 
         let dir = tantivy::directory::MmapDirectory::open(path)
             .context("Failed to open MmapDirectory")?;
-        let index = Index::open_or_create(dir, schema)
-            .context("Failed to open or create tantivy index")?;
+        let index =
+            Index::open_or_create(dir, schema).context("Failed to open or create tantivy index")?;
 
         let reader = index
             .reader_builder()
@@ -96,8 +90,7 @@ impl FulltextIndex {
             doc.add_i64(self.f_year, y as i64);
         }
 
-        writer.add_document(doc)
-            .context("Failed to add document")?;
+        writer.add_document(doc).context("Failed to add document")?;
         writer.commit().context("Failed to commit")?;
         self.reader.reload().context("Failed to reload reader")?;
         Ok(())
@@ -175,7 +168,8 @@ mod tests {
             Some("A review of stabilizer codes and topological quantum error correction."),
             &["Charlie Quantum".to_string()],
             Some(2023),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Search for holographic
         let results = idx.search("holographic entanglement", 10).unwrap();
@@ -206,7 +200,8 @@ mod tests {
             Some("Concurrent MCP sessions should be able to share one data directory."),
             &["Test Author".to_string()],
             Some(2024),
-        ).unwrap();
+        )
+        .unwrap();
 
         idx2.commit().unwrap();
         let results = idx2.search("shared index session", 10).unwrap();

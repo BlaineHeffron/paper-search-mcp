@@ -2,8 +2,8 @@ pub mod fulltext;
 pub mod hybrid;
 pub mod vectordb;
 
-use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
 
 use crate::apis::PaperResult;
 use crate::embed::specter::mock_embedding;
@@ -19,8 +19,7 @@ impl LocalIndex {
     /// Create or open the local index at the given data directory.
     /// Creates subdirectories `tantivy/` and `lance/` under data_dir.
     pub async fn create_or_open(data_dir: &Path) -> Result<Self> {
-        std::fs::create_dir_all(data_dir)
-            .context("Failed to create data directory")?;
+        std::fs::create_dir_all(data_dir).context("Failed to create data directory")?;
 
         let tantivy_path = data_dir.join("tantivy");
         let lance_path = data_dir.join("lance");

@@ -19,9 +19,7 @@ impl Config {
     pub fn from_env() -> Self {
         let data_dir = std::env::var("PAPER_SEARCH_DATA_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                dirs_or_default().join(".paper-search")
-            });
+            .unwrap_or_else(|_| dirs_or_default().join(".paper-search"));
 
         let semantic_scholar_api_key = std::env::var("SEMANTIC_SCHOLAR_API_KEY").ok();
         let ads_api_key = std::env::var("ADS_API_KEY").ok();
@@ -48,9 +46,8 @@ impl Config {
         let filter = &self.enabled_source_names;
         let filter_active = !filter.is_empty();
 
-        let should_enable = |name: &str| -> bool {
-            !filter_active || filter.contains(&name.to_lowercase())
-        };
+        let should_enable =
+            |name: &str| -> bool { !filter_active || filter.contains(&name.to_lowercase()) };
 
         // Sources that don't need API keys
         if should_enable("arxiv") {
@@ -74,9 +71,11 @@ impl Config {
 
         // Sources with optional API keys
         if should_enable("semantic_scholar") {
-            sources.push(Arc::new(apis::semantic_scholar::SemanticScholarClient::new(
-                self.semantic_scholar_api_key.clone(),
-            )));
+            sources.push(Arc::new(
+                apis::semantic_scholar::SemanticScholarClient::new(
+                    self.semantic_scholar_api_key.clone(),
+                ),
+            ));
         }
         if should_enable("openalex") {
             sources.push(Arc::new(apis::openalex::OpenAlexClient::new(
@@ -98,26 +97,71 @@ impl Config {
 
     /// Build an Unpaywall client if configured.
     pub fn build_unpaywall(&self) -> Option<apis::unpaywall::UnpaywallClient> {
-        self.unpaywall_email.as_ref().map(|email| {
-            apis::unpaywall::UnpaywallClient::new(email.clone())
-        })
+        self.unpaywall_email
+            .as_ref()
+            .map(|email| apis::unpaywall::UnpaywallClient::new(email.clone()))
     }
 
     /// Return a list of source status descriptions.
     pub fn source_status(&self) -> Vec<SourceStatus> {
         let mut statuses = vec![
-            SourceStatus { name: "arxiv".into(), enabled: true, note: "No API key required".into() },
-            SourceStatus { name: "inspire".into(), enabled: true, note: "No API key required".into() },
-            SourceStatus { name: "semantic_scholar".into(), enabled: true,
-                note: if self.semantic_scholar_api_key.is_some() { "API key set".into() } else { "No API key (rate limited)".into() } },
-            SourceStatus { name: "openalex".into(), enabled: true,
-                note: if self.openalex_email.is_some() { "Polite pool email set".into() } else { "No email (limited rate)".into() } },
-            SourceStatus { name: "crossref".into(), enabled: true, note: "No API key required".into() },
-            SourceStatus { name: "ads".into(), enabled: self.ads_api_key.is_some(),
-                note: if self.ads_api_key.is_some() { "API key set".into() } else { "Disabled: ADS_API_KEY not set".into() } },
-            SourceStatus { name: "europepmc".into(), enabled: true, note: "No API key required".into() },
-            SourceStatus { name: "doaj".into(), enabled: true, note: "No API key required".into() },
-            SourceStatus { name: "vixra".into(), enabled: true, note: "HTML scraping".into() },
+            SourceStatus {
+                name: "arxiv".into(),
+                enabled: true,
+                note: "No API key required".into(),
+            },
+            SourceStatus {
+                name: "inspire".into(),
+                enabled: true,
+                note: "No API key required".into(),
+            },
+            SourceStatus {
+                name: "semantic_scholar".into(),
+                enabled: true,
+                note: if self.semantic_scholar_api_key.is_some() {
+                    "API key set".into()
+                } else {
+                    "No API key (rate limited)".into()
+                },
+            },
+            SourceStatus {
+                name: "openalex".into(),
+                enabled: true,
+                note: if self.openalex_email.is_some() {
+                    "Polite pool email set".into()
+                } else {
+                    "No email (limited rate)".into()
+                },
+            },
+            SourceStatus {
+                name: "crossref".into(),
+                enabled: true,
+                note: "No API key required".into(),
+            },
+            SourceStatus {
+                name: "ads".into(),
+                enabled: self.ads_api_key.is_some(),
+                note: if self.ads_api_key.is_some() {
+                    "API key set".into()
+                } else {
+                    "Disabled: ADS_API_KEY not set".into()
+                },
+            },
+            SourceStatus {
+                name: "europepmc".into(),
+                enabled: true,
+                note: "No API key required".into(),
+            },
+            SourceStatus {
+                name: "doaj".into(),
+                enabled: true,
+                note: "No API key required".into(),
+            },
+            SourceStatus {
+                name: "vixra".into(),
+                enabled: true,
+                note: "HTML scraping".into(),
+            },
         ];
 
         // Apply filter
