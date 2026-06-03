@@ -1,6 +1,6 @@
 [package]
 name = "paper-search"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "MCP server for searching, indexing, and retrieving scientific papers"
 license = "MIT"
