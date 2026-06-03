@@ -6,16 +6,26 @@ const BASE_URL: &str = "https://api.openalex.org";
 
 pub struct OpenAlexClient {
     client: reqwest::Client,
+    api_key: Option<String>,
 }
 
 impl OpenAlexClient {
-    pub fn new(email: Option<String>) -> Self {
+    pub fn new(email: Option<String>, api_key: Option<String>) -> Self {
         let ua = match email {
             Some(ref e) => format!("paper-search-mcp/0.1 (mailto:{})", e),
             None => "paper-search-mcp/0.1".to_string(),
         };
         Self {
             client: reqwest::Client::builder().user_agent(ua).build().unwrap(),
+            api_key,
+        }
+    }
+
+    /// Append the OpenAlex Premium api_key query param when configured.
+    fn auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self.api_key {
+            Some(ref k) => req.query(&[("api_key", k.as_str())]),
+            None => req,
         }
     }
 }
@@ -129,15 +139,14 @@ impl PaperSource for OpenAlexClient {
             SearchSort::Relevance => {}
         }
 
-        let resp: OAResponse = request.send().await?.json().await?;
+        let resp: OAResponse = self.auth(request).send().await?.json().await?;
         Ok(resp.results.iter().map(oa_to_paper).collect())
     }
 
     async fn get_paper(&self, id: &str) -> Result<Option<PaperResult>, SourceError> {
         let oa_id = id.strip_prefix("openalex:").unwrap_or(id);
         let resp = self
-            .client
-            .get(&format!("{}/works/{}", BASE_URL, oa_id))
+            .auth(self.client.get(&format!("{}/works/{}", BASE_URL, oa_id)))
             .send()
             .await?;
         if resp.status() == 404 {
@@ -151,8 +160,7 @@ impl PaperSource for OpenAlexClient {
         let oa_id = id.strip_prefix("openalex:").unwrap_or(id);
         let filter = format!("cites:{}", oa_id);
         let resp: OAResponse = self
-            .client
-            .get(&format!("{}/works", BASE_URL))
+            .auth(self.client.get(&format!("{}/works", BASE_URL)))
             .query(&[
                 ("filter", filter.as_str()),
                 ("per_page", "25"),
@@ -172,8 +180,7 @@ impl PaperSource for OpenAlexClient {
         let oa_id = id.strip_prefix("openalex:").unwrap_or(id);
         let filter = format!("cited_by:{}", oa_id);
         let resp: OAResponse = self
-            .client
-            .get(&format!("{}/works", BASE_URL))
+            .auth(self.client.get(&format!("{}/works", BASE_URL)))
             .query(&[
                 ("filter", filter.as_str()),
                 ("per_page", "25"),

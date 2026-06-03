@@ -10,6 +10,7 @@ pub struct Config {
     pub semantic_scholar_api_key: Option<String>,
     pub ads_api_key: Option<String>,
     pub openalex_email: Option<String>,
+    pub openalex_api_key: Option<String>,
     pub unpaywall_email: Option<String>,
     pub enabled_source_names: Vec<String>,
 }
@@ -21,10 +22,14 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| dirs_or_default().join(".paper-search"));
 
-        let semantic_scholar_api_key = std::env::var("SEMANTIC_SCHOLAR_API_KEY").ok();
-        let ads_api_key = std::env::var("ADS_API_KEY").ok();
-        let openalex_email = std::env::var("OPENALEX_EMAIL").ok();
-        let unpaywall_email = std::env::var("UNPAYWALL_EMAIL").ok();
+        // Treat empty env values ("") as unset, not Some("").
+        let env_opt = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+
+        let semantic_scholar_api_key = env_opt("SEMANTIC_SCHOLAR_API_KEY");
+        let ads_api_key = env_opt("ADS_API_KEY");
+        let openalex_email = env_opt("OPENALEX_EMAIL");
+        let openalex_api_key = env_opt("OPENALEX_API_KEY");
+        let unpaywall_email = env_opt("UNPAYWALL_EMAIL");
 
         let enabled_source_names = std::env::var("PAPER_SEARCH_SOURCES")
             .map(|s| s.split(',').map(|s| s.trim().to_lowercase()).collect())
@@ -35,6 +40,7 @@ impl Config {
             semantic_scholar_api_key,
             ads_api_key,
             openalex_email,
+            openalex_api_key,
             unpaywall_email,
             enabled_source_names,
         }
@@ -80,6 +86,7 @@ impl Config {
         if should_enable("openalex") {
             sources.push(Arc::new(apis::openalex::OpenAlexClient::new(
                 self.openalex_email.clone(),
+                self.openalex_api_key.clone(),
             )));
         }
 
@@ -127,7 +134,9 @@ impl Config {
             SourceStatus {
                 name: "openalex".into(),
                 enabled: true,
-                note: if self.openalex_email.is_some() {
+                note: if self.openalex_api_key.is_some() {
+                    "Premium API key set".into()
+                } else if self.openalex_email.is_some() {
                     "Polite pool email set".into()
                 } else {
                     "No email (limited rate)".into()
