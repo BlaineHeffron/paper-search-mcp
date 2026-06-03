@@ -1,4 +1,6 @@
-use super::{normalize_date_string, PaperResult, PaperSource, SearchOptions, SearchSort, SourceError};
+use super::{
+    normalize_date_string, PaperResult, PaperSource, SearchOptions, SearchSort, SourceError,
+};
 use async_trait::async_trait;
 use chrono::NaiveDate;
 use quick_xml::events::Event;
@@ -21,6 +23,34 @@ impl ArxivClient {
                 .build()
                 .unwrap(),
         }
+    }
+
+    /// Send a request, surfacing HTTP errors instead of letting the body
+    /// ("Rate exceeded.") be parsed as an empty Atom feed. On 429 we back off
+    /// and retry a few times before giving up.
+    async fn fetch_text(&self, req: reqwest::RequestBuilder) -> Result<String, SourceError> {
+        const MAX_ATTEMPTS: u32 = 4;
+        let mut delay_secs = 3u64;
+        for attempt in 1..=MAX_ATTEMPTS {
+            let builder = req
+                .try_clone()
+                .ok_or_else(|| SourceError::Api("arXiv request is not cloneable".to_string()))?;
+            let resp = builder.send().await?;
+            if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                if attempt < MAX_ATTEMPTS {
+                    tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
+                    delay_secs *= 2;
+                    continue;
+                }
+                return Err(SourceError::Api(format!(
+                    "arXiv rate limited (HTTP 429) after {} attempts",
+                    MAX_ATTEMPTS
+                )));
+            }
+            let resp = resp.error_for_status()?;
+            return Ok(resp.text().await?);
+        }
+        unreachable!("loop returns on the final attempt")
     }
 }
 
@@ -45,20 +75,14 @@ impl PaperSource for ArxivClient {
             SearchSort::DateDesc => ("submittedDate", "descending"),
             _ => ("relevance", "descending"),
         };
-        let resp = self
-            .client
-            .get(BASE_URL)
-            .query(&[
-                ("search_query", search_query.as_str()),
-                ("start", "0"),
-                ("max_results", &max_results.to_string()),
-                ("sortBy", sort_by),
-                ("sortOrder", sort_order),
-            ])
-            .send()
-            .await?
-            .text()
-            .await?;
+        let req = self.client.get(BASE_URL).query(&[
+            ("search_query", search_query.as_str()),
+            ("start", "0"),
+            ("max_results", &max_results.to_string()),
+            ("sortBy", sort_by),
+            ("sortOrder", sort_order),
+        ]);
+        let resp = self.fetch_text(req).await?;
         // Respect rate limit: 1 req / 3s
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         parse_atom_feed(&resp)
@@ -67,7 +91,7 @@ impl PaperSource for ArxivClient {
     async fn get_paper(&self, id: &str) -> Result<Option<PaperResult>, SourceError> {
         let arxiv_id = id.strip_prefix("arxiv:").unwrap_or(id);
         let url = format!("{}?id_list={}", BASE_URL, arxiv_id);
-        let resp = self.client.get(&url).send().await?.text().await?;
+        let resp = self.fetch_text(self.client.get(&url)).await?;
         let results = parse_atom_feed(&resp)?;
         Ok(results.into_iter().next())
     }

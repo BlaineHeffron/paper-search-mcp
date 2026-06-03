@@ -66,7 +66,7 @@ struct CRAuthor {
 #[derive(Deserialize)]
 struct CRDate {
     #[serde(rename = "date-parts")]
-    date_parts: Option<Vec<Vec<u32>>>,
+    date_parts: Option<Vec<Vec<Option<u32>>>>,
 }
 #[derive(Deserialize)]
 struct CRLink {
@@ -138,7 +138,12 @@ fn date_to_string(date: &CRDate) -> Option<String> {
     date.date_parts
         .as_ref()
         .and_then(|parts| parts.first())
-        .and_then(|parts| normalize_date_parts(parts))
+        .and_then(|parts| {
+            let year = parts.first().copied().flatten()?;
+            let month = parts.get(1).copied().flatten().unwrap_or(1);
+            let day = parts.get(2).copied().flatten().unwrap_or(1);
+            normalize_date_parts(&[year, month, day])
+        })
 }
 
 fn earliest_crossref_date(item: &CRItem) -> Option<String> {
@@ -234,5 +239,45 @@ impl PaperSource for CrossRefClient {
 
     async fn get_references(&self, _id: &str) -> Result<Vec<PaperResult>, SourceError> {
         Ok(vec![]) // Would need a separate request
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crossref_response_tolerates_null_date_parts() {
+        let json = r#"{
+            "message": {
+                "items": [
+                    {
+                        "DOI": "10.1007/978-3-7643-7978-0_11",
+                        "title": ["Topological Quantum Field Theory as Topological Quantum Gravity"],
+                        "issued": { "date-parts": [[null]] },
+                        "is-referenced-by-count": 0
+                    },
+                    {
+                        "DOI": "10.1103/physrevd.79.084008",
+                        "title": ["Quantum gravity at a Lifshitz point"],
+                        "issued": { "date-parts": [[2009, 4, 6]] },
+                        "is-referenced-by-count": 2199
+                    }
+                ]
+            }
+        }"#;
+
+        let response: CRResponse = serde_json::from_str(json).unwrap();
+        let papers: Vec<_> = response
+            .message
+            .items
+            .unwrap()
+            .iter()
+            .map(item_to_paper)
+            .collect();
+
+        assert_eq!(papers.len(), 2);
+        assert_eq!(papers[0].published_at, None);
+        assert_eq!(papers[1].published_at.as_deref(), Some("2009-04-06"));
     }
 }
