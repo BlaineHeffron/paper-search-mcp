@@ -15,6 +15,9 @@ impl ArxivClient {
         Self {
             client: reqwest::Client::builder()
                 .user_agent("paper-search-mcp/0.1")
+                // export.arxiv.org (Fastly) stalls indefinitely on HTTP/2 requests;
+                // force HTTP/1.1 to avoid hangs.
+                .http1_only()
                 .build()
                 .unwrap(),
         }
