@@ -217,29 +217,10 @@ impl PaperSearchServer {
         Parameters(params): Parameters<GetPaperParams>,
     ) -> Result<CallToolResult, McpError> {
         let id = &params.id;
-        let target_source = params.source.as_deref().or_else(|| {
-            if id.starts_with("arxiv:") {
-                Some("arxiv")
-            } else if id.starts_with("inspire:") {
-                Some("inspire")
-            } else if id.starts_with("s2:") {
-                Some("semantic_scholar")
-            } else if id.starts_with("ads:") {
-                Some("ads")
-            } else if id.starts_with("doi:") {
-                Some("crossref")
-            } else if id.starts_with("pmid:") {
-                Some("europepmc")
-            } else if id.starts_with("doaj:") {
-                Some("doaj")
-            } else if id.starts_with("vixra:") {
-                Some("vixra")
-            } else if id.starts_with("openalex:") {
-                Some("openalex")
-            } else {
-                None
-            }
-        });
+        let target_source = params
+            .source
+            .as_deref()
+            .or_else(|| source_from_prefixed_id(id));
 
         // Check local index first
         {
@@ -532,7 +513,7 @@ impl ServerHandler for PaperSearchServer {
             instructions: Some(
                 "Search, index, and retrieve scientific papers across open journals. \
                  Supports arXiv, INSPIRE-HEP, Semantic Scholar, OpenAlex, CrossRef, \
-                 NASA ADS, Europe PMC, DOAJ, and viXra. Local hybrid search with \
+                 NASA ADS, Europe PMC, DOAJ, and opt-in viXra. Local hybrid search with \
                  BM25 + SPECTER2 embeddings."
                     .into(),
             ),
@@ -555,4 +536,49 @@ async fn main() -> anyhow::Result<()> {
     service.waiting().await?;
 
     Ok(())
+}
+
+fn source_from_prefixed_id(id: &str) -> Option<&'static str> {
+    if id.starts_with("arxiv:") {
+        Some("arxiv")
+    } else if id.starts_with("inspire:") {
+        Some("inspire")
+    } else if id.starts_with("s2:") {
+        Some("semantic_scholar")
+    } else if id.starts_with("ads:") {
+        Some("ads")
+    } else if id.starts_with("doi:") {
+        Some("crossref")
+    } else if id.starts_with("pmid:") {
+        Some("europepmc")
+    } else if id.starts_with("doaj:") {
+        Some("doaj")
+    } else if id.starts_with("vixra:") {
+        Some("vixra")
+    } else if id.starts_with("openalex:") {
+        Some("openalex")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_from_prefixed_id;
+
+    #[test]
+    fn prefixed_ids_route_to_existing_sources() {
+        assert_eq!(source_from_prefixed_id("arxiv:2401.00001"), Some("arxiv"));
+        assert_eq!(
+            source_from_prefixed_id("doi:10.1234/example"),
+            Some("crossref")
+        );
+        assert_eq!(source_from_prefixed_id("pmid:12345"), Some("europepmc"));
+        assert_eq!(source_from_prefixed_id("openalex:W123"), Some("openalex"));
+    }
+
+    #[test]
+    fn prefixed_vixra_id_still_routes_to_vixra() {
+        assert_eq!(source_from_prefixed_id("vixra:2603.0090"), Some("vixra"));
+    }
 }

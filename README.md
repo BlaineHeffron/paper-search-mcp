@@ -4,7 +4,7 @@
 
 ## Features
 
-- Federated paper search across arXiv, INSPIRE-HEP, Semantic Scholar, OpenAlex, Crossref, Europe PMC, DOAJ, viXra, and NASA ADS.
+- Federated paper search across arXiv, INSPIRE-HEP, Semantic Scholar, OpenAlex, Crossref, Europe PMC, DOAJ, and NASA ADS, with viXra available as an opt-in source.
 - Source filtering, date filtering, and sort modes for relevance, newest first, oldest first, or hybrid ranking.
 - Paper metadata lookup by prefixed IDs such as `arxiv:`, `doi:`, `inspire:`, `s2:`, `ads:`, `pmid:`, `doaj:`, `vixra:`, and `openalex:`.
 - Citation and reference lookup when the selected source supports it.
@@ -59,7 +59,7 @@ Configuration is read from environment variables.
 | Variable | Purpose |
 | --- | --- |
 | `PAPER_SEARCH_DATA_DIR` | Directory for the local paper index. Defaults to `.paper-search` in the user's home directory. |
-| `PAPER_SEARCH_SOURCES` | Optional comma-separated source allowlist, for example `arxiv,inspire,ads`. |
+| `PAPER_SEARCH_SOURCES` | Optional comma-separated source allowlist, for example `arxiv,inspire,ads`. viXra is disabled by default; include `vixra` in this list to opt in. |
 | `SEMANTIC_SCHOLAR_API_KEY` | Optional Semantic Scholar API key. Without it, Semantic Scholar remains enabled but rate-limited. |
 | `ADS_API_KEY` | NASA ADS API key. ADS is disabled unless this is set. |
 | `OPENALEX_EMAIL` | Optional OpenAlex polite-pool email. |
@@ -72,6 +72,13 @@ Example with ADS and Unpaywall enabled:
 export ADS_API_KEY="..."
 export UNPAYWALL_EMAIL="you@example.com"
 export PAPER_SEARCH_SOURCES="arxiv,inspire,ads,openalex,crossref"
+paper-search
+```
+
+Example enabling viXra:
+
+```sh
+export PAPER_SEARCH_SOURCES="arxiv,inspire,crossref,doaj,europepmc,semantic_scholar,openalex,vixra"
 paper-search
 ```
 

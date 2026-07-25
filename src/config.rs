@@ -49,11 +49,7 @@ impl Config {
     /// Build the list of enabled paper sources based on configuration.
     pub fn build_sources(&self) -> Vec<Arc<dyn PaperSource>> {
         let mut sources: Vec<Arc<dyn PaperSource>> = Vec::new();
-        let filter = &self.enabled_source_names;
-        let filter_active = !filter.is_empty();
-
-        let should_enable =
-            |name: &str| -> bool { !filter_active || filter.contains(&name.to_lowercase()) };
+        let should_enable = |name: &str| self.should_enable_source(name);
 
         // Sources that don't need API keys
         if should_enable("arxiv") {
@@ -168,8 +164,12 @@ impl Config {
             },
             SourceStatus {
                 name: "vixra".into(),
-                enabled: true,
-                note: "HTML scraping".into(),
+                enabled: self.should_enable_source("vixra"),
+                note: if self.should_enable_source("vixra") {
+                    "HTML scraping".into()
+                } else {
+                    "Disabled by default; opt in with PAPER_SEARCH_SOURCES".into()
+                },
             },
         ];
 
@@ -185,6 +185,14 @@ impl Config {
 
         statuses
     }
+
+    fn should_enable_source(&self, name: &str) -> bool {
+        if self.enabled_source_names.is_empty() {
+            return name != "vixra";
+        }
+
+        self.enabled_source_names.contains(&name.to_lowercase())
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -198,4 +206,77 @@ fn dirs_or_default() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+    use std::path::PathBuf;
+
+    fn config_with_sources(enabled_source_names: &[&str]) -> Config {
+        Config {
+            data_dir: PathBuf::from(".paper-search-test"),
+            semantic_scholar_api_key: None,
+            ads_api_key: None,
+            openalex_email: None,
+            openalex_api_key: None,
+            unpaywall_email: None,
+            enabled_source_names: enabled_source_names
+                .iter()
+                .map(|name| name.to_string())
+                .collect(),
+        }
+    }
+
+    fn built_source_names(config: &Config) -> Vec<String> {
+        config
+            .build_sources()
+            .into_iter()
+            .map(|source| source.name().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn default_enabled_sources_exclude_vixra() {
+        let config = config_with_sources(&[]);
+
+        let names = built_source_names(&config);
+
+        assert!(names.contains(&"arxiv".to_string()));
+        assert!(names.contains(&"inspire".to_string()));
+        assert!(names.contains(&"crossref".to_string()));
+        assert!(names.contains(&"doaj".to_string()));
+        assert!(names.contains(&"europepmc".to_string()));
+        assert!(names.contains(&"semantic_scholar".to_string()));
+        assert!(names.contains(&"openalex".to_string()));
+        assert!(!names.contains(&"vixra".to_string()));
+    }
+
+    #[test]
+    fn explicit_source_allowlist_can_enable_vixra() {
+        let config = config_with_sources(&["arxiv", "vixra"]);
+
+        let names = built_source_names(&config);
+
+        assert_eq!(names, vec!["arxiv".to_string(), "vixra".to_string()]);
+    }
+
+    #[test]
+    fn source_status_marks_vixra_disabled_by_default_and_enabled_when_listed() {
+        let default_status = config_with_sources(&[])
+            .source_status()
+            .into_iter()
+            .find(|status| status.name == "vixra")
+            .expect("vixra status");
+        assert!(!default_status.enabled);
+        assert!(default_status.note.contains("Disabled by default"));
+
+        let enabled_status = config_with_sources(&["vixra"])
+            .source_status()
+            .into_iter()
+            .find(|status| status.name == "vixra")
+            .expect("vixra status");
+        assert!(enabled_status.enabled);
+        assert_eq!(enabled_status.note, "HTML scraping");
+    }
 }
