@@ -2,3 +2,6 @@
 *.onnx
 data/
 .env
+.agent_bus/
+.codex/
+.mcp.json

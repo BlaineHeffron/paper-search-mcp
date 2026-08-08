@@ -13,7 +13,7 @@ vendored-openssl = ["dep:openssl"]
 [dependencies]
 rmcp = { version = "0.14", features = ["server", "transport-io", "macros"] }
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 lancedb = "0.26"
@@ -35,3 +35,10 @@ futures = "0.3"
 anyhow = "1"
 schemars = "1"
 openssl = { version = "0.10", features = ["vendored"], optional = true }
+base64 = "0.22"
+chacha20poly1305 = { version = "0.11", features = ["zeroize"] }
+keyring = "4.1"
+libc = "0.2"
+psl = "2.1"
+sha2 = "0.10"
+zeroize = { version = "1", features = ["derive"] }
