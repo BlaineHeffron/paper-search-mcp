@@ -230,7 +230,7 @@ impl PaperSearchServer {
         let statuses = self.config.source_status();
         let json = serde_json::to_string_pretty(&statuses)
             .map_err(|e| McpError::internal_error(format!("Serialization error: {}", e), None))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -312,7 +312,7 @@ impl PaperSearchServer {
 
         let json = serde_json::to_string_pretty(&results)
             .map_err(|e| McpError::internal_error(format!("{}", e), None))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -334,7 +334,7 @@ impl PaperSearchServer {
             if let Ok(Some(paper)) = idx.get_paper(id).await {
                 let json = serde_json::to_string_pretty(&paper)
                     .map_err(|e| McpError::internal_error(format!("{}", e), None))?;
-                return Ok(CallToolResult::success(vec![Content::text(json)]));
+                return Ok(CallToolResult::success(vec![ContentBlock::text(json)]));
             }
         }
 
@@ -348,7 +348,7 @@ impl PaperSearchServer {
                 Ok(Some(paper)) => {
                     let json = serde_json::to_string_pretty(&paper)
                         .map_err(|e| McpError::internal_error(format!("{}", e), None))?;
-                    return Ok(CallToolResult::success(vec![Content::text(json)]));
+                    return Ok(CallToolResult::success(vec![ContentBlock::text(json)]));
                 }
                 Ok(None) => continue,
                 Err(e) => {
@@ -358,7 +358,7 @@ impl PaperSearchServer {
             }
         }
 
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "Paper not found: {}",
             id
         ))]))
@@ -376,7 +376,7 @@ impl PaperSearchServer {
             .await;
         let json = serde_json::to_string_pretty(&results)
             .map_err(|e| McpError::internal_error(format!("{}", e), None))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(description = "Get papers referenced by a given paper")]
@@ -391,7 +391,7 @@ impl PaperSearchServer {
             .await;
         let json = serde_json::to_string_pretty(&results)
             .map_err(|e| McpError::internal_error(format!("{}", e), None))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -433,7 +433,7 @@ impl PaperSearchServer {
 
         let json = serde_json::to_string_pretty(&papers)
             .map_err(|e| McpError::internal_error(format!("{}", e), None))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -462,7 +462,7 @@ impl PaperSearchServer {
 
         let json = serde_json::to_string_pretty(&papers)
             .map_err(|e| McpError::internal_error(format!("{}", e), None))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -501,7 +501,7 @@ impl PaperSearchServer {
             .await
             .map_err(|e| McpError::internal_error(format!("Indexing failed: {}", e), None))?;
 
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "Indexed: {} - {}",
             paper.id, paper.title
         ))]))
@@ -532,7 +532,7 @@ impl PaperSearchServer {
             }
         }
 
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "Indexed {} of {} papers from query: {}",
             indexed,
             papers.len(),
@@ -553,11 +553,11 @@ impl PaperSearchServer {
         })?;
 
         match client.get_pdf_url(&params.doi).await {
-            Ok(Some(url)) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(Some(url)) => Ok(CallToolResult::success(vec![ContentBlock::text(format!(
                 "PDF URL: {}",
                 url
             ))])),
-            Ok(None) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(None) => Ok(CallToolResult::success(vec![ContentBlock::text(format!(
                 "No open-access PDF found for DOI: {}",
                 params.doi
             ))])),
@@ -621,7 +621,7 @@ impl PaperSearchServer {
         let json = serde_json::to_string_pretty(&link).map_err(|err| {
             McpError::internal_error(format!("Serialization error: {}", err), None)
         })?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
@@ -734,7 +734,7 @@ impl PaperSearchServer {
         }
         if let (Some(doi), Some(unpaywall)) = (params.doi.as_deref(), self.unpaywall.as_ref()) {
             if let Ok(Some(open_url)) = unpaywall.get_pdf_url(doi).await {
-                return Ok(CallToolResult::success(vec![Content::text(format!(
+                return Ok(CallToolResult::success(vec![ContentBlock::text(format!(
                     "Open-access PDF available; institutional fallback not used. PDF URL: {}",
                     open_url
                 ))]));
@@ -855,21 +855,35 @@ impl PaperSearchServer {
 
 #[tool_handler]
 impl ServerHandler for PaperSearchServer {
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        let stateless = context
+            .protocol_version()
+            .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28);
+        Ok(ListToolsResult {
+            result_type: Some(ResultType::COMPLETE),
+            tools: self.tool_router.list_all(),
+            meta: None,
+            next_cursor: None,
+            ttl_ms: stateless.then_some(300_000),
+            cache_scope: stateless.then_some(CacheScope::Public),
+        })
+    }
+
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation::from_build_env(),
-            instructions: Some(
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::from_build_env())
+            .with_instructions(
                 "Search, index, and retrieve scientific papers across open journals. \
                  Supports arXiv, INSPIRE-HEP, Semantic Scholar, OpenAlex, CrossRef, \
                  NASA ADS, Europe PMC, DOAJ, and opt-in viXra. Local hybrid search with \
                  BM25 + SPECTER2 embeddings. Can create browser-mediated institutional \
                  access URLs when a library proxy is configured; credentials never pass \
-                 through the MCP server."
-                    .into(),
-            ),
-        }
+                 through the MCP server.",
+            )
     }
 }
 
@@ -945,7 +959,7 @@ fn institutional_target_url(doi: Option<String>, url: Option<String>) -> Result<
 fn json_result<T: serde::Serialize>(value: &T) -> Result<CallToolResult, McpError> {
     let json = serde_json::to_string_pretty(value)
         .map_err(|_| McpError::internal_error("Serialization failed".to_string(), None))?;
-    Ok(CallToolResult::success(vec![Content::text(json)]))
+    Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
 }
 
 fn unavailable_session_status(

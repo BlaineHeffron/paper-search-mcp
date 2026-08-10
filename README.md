@@ -2,6 +2,10 @@
 
 `paper-search` is a Rust MCP server for searching, retrieving, and locally indexing scientific papers. It exposes MCP tools over stdio, so agent clients can query multiple scholarly sources through one interface and optionally build a local searchable paper index.
 
+The server uses RMCP 3 and supports MCP `2026-07-28`'s stateless discovery/request
+lifecycle while retaining legacy initialize compatibility. The deterministic tool
+catalog advertises a five-minute public cache lifetime to modern clients.
+
 ## Features
 
 - Federated paper search across arXiv, INSPIRE-HEP, Semantic Scholar, OpenAlex, Crossref, Europe PMC, DOAJ, and NASA ADS, with viXra available as an opt-in source.
