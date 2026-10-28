@@ -130,6 +130,14 @@ fn reciprocal_rank(rank: usize) -> f32 {
 fn dedupe_key(paper: &PaperResult) -> String {
     if let Some(ref doi) = paper.doi {
         format!("doi:{}", doi.to_lowercase())
+    } else if let Some(ref arxiv_id) = paper.arxiv_id {
+        let id = arxiv_id.to_lowercase();
+        let id = id.strip_prefix("arxiv:").unwrap_or(&id);
+        let id = match id.rsplit_once('v') {
+            Some((base, v)) if !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()) => base,
+            _ => id,
+        };
+        format!("arxiv:{}", id)
     } else {
         format!("title:{}", normalize_title(&paper.title))
     }
@@ -327,6 +335,19 @@ mod tests {
         let deduped = deduplicate_and_rank(results, 10, &SearchOptions::default());
         assert_eq!(deduped.len(), 1);
         assert_eq!(deduped[0].ranking_date.as_deref(), Some("2024-02-01"));
+    }
+
+    #[test]
+    fn test_dedup_by_unversioned_arxiv_id_without_doi() {
+        let mut hexagon = paper("hexagon:2610.99999", "Title A", None, None, None);
+        hexagon.arxiv_id = Some("2610.13100".to_string());
+        let mut arxiv = paper("arxiv:2610.13100v2", "Title B", None, None, None);
+        arxiv.arxiv_id = Some("2610.13100v2".to_string());
+        let mut other = paper("arxiv:2610.13101", "Title C", None, None, None);
+        other.arxiv_id = Some("2610.13101".to_string());
+        let results = vec![vec![hexagon, arxiv, other]];
+        let deduped = deduplicate_and_rank(results, 10, &SearchOptions::default());
+        assert_eq!(deduped.len(), 2);
     }
 
     #[test]
