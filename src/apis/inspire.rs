@@ -106,7 +106,10 @@ fn hit_to_paper(hit: &InspireHit) -> PaperResult {
         .and_then(|d| d.get(..4))
         .and_then(|y| y.parse::<u32>().ok());
     let url = format!("https://inspirehep.net/literature/{}", hit.id);
-    let published_at = m.earliest_date.as_deref().and_then(normalize_date_string);
+    let published_at = m
+        .earliest_date
+        .as_deref()
+        .and_then(normalize_date_string);
 
     PaperResult {
         id: format!("inspire:{}", hit.id),

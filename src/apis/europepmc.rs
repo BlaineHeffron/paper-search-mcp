@@ -1,6 +1,4 @@
-use super::{
-    normalize_date_string, PaperResult, PaperSource, SearchOptions, SearchSort, SourceError,
-};
+use super::{normalize_date_string, PaperResult, PaperSource, SearchOptions, SearchSort, SourceError};
 use async_trait::async_trait;
 use serde::Deserialize;
 

@@ -97,8 +97,7 @@ fn deduplicate_and_rank(
     let mut deduped: Vec<AggregatedPaper> = grouped
         .into_values()
         .filter_map(|mut item| {
-            item.ranking_date =
-                choose_ranking_date(item.ranking_date, parse_rank_date(&item.canonical));
+            item.ranking_date = choose_ranking_date(item.ranking_date, parse_rank_date(&item.canonical));
             if !matches_date_filter(item.ranking_date, options) {
                 return None;
             }
@@ -183,7 +182,8 @@ fn normalize_paper_dates(paper: &mut PaperResult) {
         .and_then(normalize_date_string)
         .or_else(|| {
             paper.year.and_then(|year| {
-                NaiveDate::from_ymd_opt(year as i32, 1, 1).map(|d| d.format("%Y-%m-%d").to_string())
+                NaiveDate::from_ymd_opt(year as i32, 1, 1)
+                    .map(|d| d.format("%Y-%m-%d").to_string())
             })
         })
     {
@@ -306,9 +306,7 @@ mod tests {
             title: title.to_string(),
             authors: vec![],
             abstract_text: None,
-            year: published_at
-                .and_then(|s| s.get(..4))
-                .and_then(|y| y.parse().ok()),
+            year: published_at.and_then(|s| s.get(..4)).and_then(|y| y.parse().ok()),
             source: "test".to_string(),
             doi: doi.map(|s| s.to_string()),
             arxiv_id: None,
@@ -323,20 +321,8 @@ mod tests {
     #[test]
     fn test_dedup_by_doi_keeps_earliest_ranking_date() {
         let results = vec![vec![
-            paper(
-                "s2:1",
-                "Paper A",
-                Some("10.1234/a"),
-                Some(10),
-                Some("2024-03-15"),
-            ),
-            paper(
-                "arxiv:1",
-                "Paper A",
-                Some("10.1234/a"),
-                None,
-                Some("2024-02-01"),
-            ),
+            paper("s2:1", "Paper A", Some("10.1234/a"), Some(10), Some("2024-03-15")),
+            paper("arxiv:1", "Paper A", Some("10.1234/a"), None, Some("2024-02-01")),
         ]];
         let deduped = deduplicate_and_rank(results, 10, &SearchOptions::default());
         assert_eq!(deduped.len(), 1);
