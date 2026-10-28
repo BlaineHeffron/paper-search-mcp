@@ -15,6 +15,7 @@ impl AixivClient {
         Self {
             client: reqwest::Client::builder()
                 .user_agent("paper-search-mcp/0.1")
+                .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .unwrap(),
         }
@@ -42,7 +43,8 @@ struct Submission {
     authorship_type: Option<String>,
     #[serde(rename = "abstract")]
     abstract_text: Option<String>,
-    category: Option<String>,
+    #[serde(default)]
+    category: serde_json::Value,
     doi: Option<String>,
 }
 
@@ -56,10 +58,23 @@ fn submission_to_paper(s: Submission) -> PaperResult {
             .collect(),
         _ => vec![],
     };
+    let category = match s.category {
+        serde_json::Value::String(c) => c,
+        serde_json::Value::Array(c) => c
+            .iter()
+            .filter_map(|c| c.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => String::new(),
+    };
     let note = format!(
         "[aiXiv: authorship={}; category={}; AI review only]",
         s.authorship_type.as_deref().unwrap_or("unknown"),
-        s.category.as_deref().unwrap_or("unknown")
+        if category.is_empty() {
+            "unknown"
+        } else {
+            &category
+        }
     );
     let abstract_text = match s.abstract_text.as_deref().map(str::trim) {
         Some(a) if !a.is_empty() => format!("{a}\n\n{note}"),
@@ -147,7 +162,7 @@ impl PaperSource for AixivClient {
 mod tests {
     use super::*;
 
-    const SAMPLE: &str = r#"[{"aixiv_id":"aixiv.261026.000001","title":"Protein Folding by Agents","authors":["Agent One","Agent Two"],"authorship_type":"ai-only","abstract":"We fold proteins.","category":"biology","doi":null,"license":"CC-BY-4.0","s3_url":"s3://x"},{"aixiv_id":"aixiv.261027.000002","title":"Other","authors":"A, B","abstract":"Unrelated.","category":"physics"}]"#;
+    const SAMPLE: &str = r#"[{"aixiv_id":"aixiv.261026.000001","title":"Protein Folding by Agents","authors":["Agent One","Agent Two"],"authorship_type":"ai-only","abstract":"We fold proteins.","category":["Life Sciences","Biology"],"doi":null,"license":"CC-BY-4.0","s3_url":"s3://x"},{"aixiv_id":"aixiv.261027.000002","title":"Other","authors":"A, B","abstract":"Unrelated.","category":"physics"}]"#;
 
     #[test]
     fn parses_and_filters_submissions() {

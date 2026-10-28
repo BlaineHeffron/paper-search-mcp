@@ -13,6 +13,7 @@ impl HexagonClient {
         Self {
             client: reqwest::Client::builder()
                 .user_agent("paper-search-mcp/0.1")
+                .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .unwrap(),
         }
@@ -107,10 +108,18 @@ impl PaperSource for HexagonClient {
         max_results: u32,
         _options: &SearchOptions,
     ) -> Result<Vec<PaperResult>, SourceError> {
+        // q is limited to a 50-byte LIKE pattern, two bytes of which are the % wrappers.
+        let mut end = query.len().min(48);
+        while !query.is_char_boundary(end) {
+            end -= 1;
+        }
         let resp: WorksResponse = self
             .client
             .get(format!("{}/api/v1/works", BASE_URL))
-            .query(&[("q", query), ("limit", &max_results.min(50).to_string())])
+            .query(&[
+                ("q", &query[..end]),
+                ("limit", &max_results.min(50).to_string()),
+            ])
             .send()
             .await?
             .error_for_status()?
