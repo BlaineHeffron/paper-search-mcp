@@ -108,24 +108,20 @@ impl PaperSource for HexagonClient {
         max_results: u32,
         _options: &SearchOptions,
     ) -> Result<Vec<PaperResult>, SourceError> {
-        // q is limited to a 50-byte LIKE pattern, two bytes of which are the % wrappers.
-        let mut end = query.len().min(48);
-        while !query.is_char_boundary(end) {
-            end -= 1;
-        }
-        let resp: WorksResponse = self
-            .client
-            .get(format!("{}/api/v1/works", BASE_URL))
-            .query(&[
-                ("q", &query[..end]),
-                ("limit", &max_results.min(50).to_string()),
-            ])
+        let resp: WorksResponse = works_request(&self.client, query)
             .send()
             .await?
             .error_for_status()?
             .json()
             .await?;
-        Ok(resp.works.into_iter().map(work_to_paper).collect())
+        // q matches the whole phrase, so multi-word queries are ANDed locally.
+        Ok(resp
+            .works
+            .into_iter()
+            .map(work_to_paper)
+            .filter(|p| super::aixiv::matches_query(p, query))
+            .take(max_results as usize)
+            .collect())
     }
 
     async fn get_paper(&self, id: &str) -> Result<Option<PaperResult>, SourceError> {
@@ -147,6 +143,22 @@ impl PaperSource for HexagonClient {
     async fn get_references(&self, _id: &str) -> Result<Vec<PaperResult>, SourceError> {
         Ok(vec![])
     }
+}
+
+/// Query by the longest term (likely the most selective), since q is a phrase match.
+/// q is limited to a 50-byte LIKE pattern, two bytes of which are the % wrappers.
+fn works_request(client: &reqwest::Client, query: &str) -> reqwest::RequestBuilder {
+    let term = query
+        .split_whitespace()
+        .max_by_key(|t| t.len())
+        .unwrap_or("");
+    let mut end = term.len().min(48);
+    while !term.is_char_boundary(end) {
+        end -= 1;
+    }
+    client
+        .get(format!("{}/api/v1/works", BASE_URL))
+        .query(&[("q", &term[..end]), ("limit", "50")])
 }
 
 /// Accept either a bare work object or one wrapped as `{"work": {...}}`.
@@ -183,6 +195,18 @@ mod tests {
         assert!(abs.contains("authorship=no-human-author-claimed"));
         assert!(abs.contains("human understanding=some"));
         assert!(abs.contains("tools=Acme Prover"));
+    }
+
+    #[test]
+    fn multi_word_query_requests_longest_term_bounded() {
+        let client = reqwest::Client::new();
+        let url = |q| works_request(&client, q).build().unwrap().url().to_string();
+        assert_eq!(
+            url("Lean formalization of Erdos problem"),
+            "https://hexagonmath.org/api/v1/works?q=formalization&limit=50"
+        );
+        let long = "é".repeat(30);
+        assert!(url(&long).contains(&format!("q={}&", "%C3%A9".repeat(24))));
     }
 
     #[test]

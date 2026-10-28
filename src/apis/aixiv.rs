@@ -105,7 +105,7 @@ fn submission_to_paper(s: Submission) -> PaperResult {
     }
 }
 
-fn matches_query(p: &PaperResult, query: &str) -> bool {
+pub(super) fn matches_query(p: &PaperResult, query: &str) -> bool {
     let haystack = format!(
         "{} {} {}",
         p.title,
