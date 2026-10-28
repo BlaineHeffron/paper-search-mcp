@@ -3,6 +3,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 const BASE_URL: &str = "https://hexagonmath.org";
+/// Pages of 50 followed per search; covers the whole corpus today (~500 works).
+const MAX_PAGES: usize = 10;
 
 pub struct HexagonClient {
     client: reqwest::Client,
@@ -23,6 +25,12 @@ impl HexagonClient {
 #[derive(Deserialize)]
 struct WorksResponse {
     works: Vec<Work>,
+    page: Option<Page>,
+}
+
+#[derive(Deserialize)]
+struct Page {
+    next_cursor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -108,20 +116,30 @@ impl PaperSource for HexagonClient {
         max_results: u32,
         _options: &SearchOptions,
     ) -> Result<Vec<PaperResult>, SourceError> {
-        let resp: WorksResponse = works_request(&self.client, query)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        // q matches the whole phrase, so multi-word queries are ANDed locally.
-        Ok(resp
-            .works
-            .into_iter()
-            .map(work_to_paper)
-            .filter(|p| super::aixiv::matches_query(p, query))
-            .take(max_results as usize)
-            .collect())
+        // q matches the whole phrase, so page through the longest term's matches
+        // (bounded) and AND all terms locally.
+        let mut papers = Vec::new();
+        let mut cursor = None;
+        for _ in 0..MAX_PAGES {
+            let resp: WorksResponse = works_request(&self.client, query, cursor.as_deref())
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            papers.extend(
+                resp.works
+                    .into_iter()
+                    .map(work_to_paper)
+                    .filter(|p| super::aixiv::matches_query(p, query)),
+            );
+            cursor = resp.page.and_then(|p| p.next_cursor);
+            if papers.len() >= max_results as usize || cursor.is_none() {
+                break;
+            }
+        }
+        papers.truncate(max_results as usize);
+        Ok(papers)
     }
 
     async fn get_paper(&self, id: &str) -> Result<Option<PaperResult>, SourceError> {
@@ -147,7 +165,11 @@ impl PaperSource for HexagonClient {
 
 /// Query by the longest term (likely the most selective), since q is a phrase match.
 /// q is limited to a 50-byte LIKE pattern, two bytes of which are the % wrappers.
-fn works_request(client: &reqwest::Client, query: &str) -> reqwest::RequestBuilder {
+fn works_request(
+    client: &reqwest::Client,
+    query: &str,
+    cursor: Option<&str>,
+) -> reqwest::RequestBuilder {
     let term = query
         .split_whitespace()
         .max_by_key(|t| t.len())
@@ -159,6 +181,7 @@ fn works_request(client: &reqwest::Client, query: &str) -> reqwest::RequestBuild
     client
         .get(format!("{}/api/v1/works", BASE_URL))
         .query(&[("q", &term[..end]), ("limit", "50")])
+        .query(&[("cursor", cursor)])
 }
 
 /// Accept either a bare work object or one wrapped as `{"work": {...}}`.
@@ -200,13 +223,23 @@ mod tests {
     #[test]
     fn multi_word_query_requests_longest_term_bounded() {
         let client = reqwest::Client::new();
-        let url = |q| works_request(&client, q).build().unwrap().url().to_string();
+        let url = |q, c| {
+            works_request(&client, q, c)
+                .build()
+                .unwrap()
+                .url()
+                .to_string()
+        };
         assert_eq!(
-            url("Lean formalization of Erdos problem"),
+            url("Lean formalization of Erdos problem", None),
             "https://hexagonmath.org/api/v1/works?q=formalization&limit=50"
         );
+        assert_eq!(
+            url("Lean formalization", Some("abc")),
+            "https://hexagonmath.org/api/v1/works?q=formalization&limit=50&cursor=abc"
+        );
         let long = "é".repeat(30);
-        assert!(url(&long).contains(&format!("q={}&", "%C3%A9".repeat(24))));
+        assert!(url(&long, None).contains(&format!("q={}&", "%C3%A9".repeat(24))));
     }
 
     #[test]
