@@ -125,8 +125,14 @@ impl Config {
         if should_enable("europepmc") {
             sources.push(Arc::new(apis::europepmc::EuropePmcClient::new()));
         }
+        if should_enable("hexagon") {
+            sources.push(Arc::new(apis::hexagon::HexagonClient::new()));
+        }
         if should_enable("vixra") {
             sources.push(Arc::new(apis::vixra::VixraClient::new()));
+        }
+        if should_enable("aixiv") {
+            sources.push(Arc::new(apis::aixiv::AixivClient::new()));
         }
 
         // Sources with optional API keys
@@ -296,6 +302,20 @@ impl Config {
                 note: "No API key required".into(),
             },
             SourceStatus {
+                name: "hexagon".into(),
+                enabled: true,
+                note: "No API key required".into(),
+            },
+            SourceStatus {
+                name: "aixiv".into(),
+                enabled: self.should_enable_source("aixiv"),
+                note: if self.should_enable_source("aixiv") {
+                    "Local filter over recent submissions".into()
+                } else {
+                    "Disabled by default; opt in with PAPER_SEARCH_SOURCES".into()
+                },
+            },
+            SourceStatus {
                 name: "vixra".into(),
                 enabled: self.should_enable_source("vixra"),
                 note: if self.should_enable_source("vixra") {
@@ -334,7 +354,7 @@ impl Config {
 
     fn should_enable_source(&self, name: &str) -> bool {
         if self.enabled_source_names.is_empty() {
-            return name != "vixra";
+            return !matches!(name, "vixra" | "aixiv");
         }
 
         self.enabled_source_names.contains(&name.to_lowercase())
@@ -431,7 +451,15 @@ mod tests {
         assert!(names.contains(&"europepmc".to_string()));
         assert!(names.contains(&"semantic_scholar".to_string()));
         assert!(names.contains(&"openalex".to_string()));
+        assert!(names.contains(&"hexagon".to_string()));
         assert!(!names.contains(&"vixra".to_string()));
+        assert!(!names.contains(&"aixiv".to_string()));
+    }
+
+    #[test]
+    fn explicit_source_allowlist_can_enable_aixiv() {
+        let names = built_source_names(&config_with_sources(&["aixiv"]));
+        assert_eq!(names, vec!["aixiv".to_string()]);
     }
 
     #[test]

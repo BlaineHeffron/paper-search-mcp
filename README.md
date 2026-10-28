@@ -8,9 +8,9 @@ catalog advertises a five-minute public cache lifetime to modern clients.
 
 ## Features
 
-- Federated paper search across arXiv, INSPIRE-HEP, Semantic Scholar, OpenAlex, Crossref, Europe PMC, DOAJ, and NASA ADS, with viXra available as an opt-in source.
+- Federated paper search across arXiv, INSPIRE-HEP, Semantic Scholar, OpenAlex, Crossref, Europe PMC, DOAJ, NASA ADS, and Hexagon (AI-produced math/theoretical CS preprints), with viXra and aiXiv (AI-written papers, AI review only) available as opt-in sources. Hexagon and aiXiv results carry their AI-provenance fields in a bracketed note appended to the abstract.
 - Source filtering, date filtering, and sort modes for relevance, newest first, oldest first, or hybrid ranking.
-- Paper metadata lookup by prefixed IDs such as `arxiv:`, `doi:`, `inspire:`, `s2:`, `ads:`, `pmid:`, `doaj:`, `vixra:`, and `openalex:`.
+- Paper metadata lookup by prefixed IDs such as `arxiv:`, `doi:`, `inspire:`, `s2:`, `ads:`, `pmid:`, `doaj:`, `hexagon:`, `vixra:`, `aixiv:`, and `openalex:`.
 - Citation and reference lookup when the selected source supports it.
 - Local indexing with Tantivy full-text search and LanceDB vector storage.
 - Open-access PDF discovery through Unpaywall when configured.
@@ -64,7 +64,7 @@ Configuration is read from environment variables.
 | Variable | Purpose |
 | --- | --- |
 | `PAPER_SEARCH_DATA_DIR` | Directory for the local paper index. Defaults to `.paper-search` in the user's home directory. |
-| `PAPER_SEARCH_SOURCES` | Optional comma-separated source allowlist, for example `arxiv,inspire,ads`. viXra is disabled by default; include `vixra` in this list to opt in. |
+| `PAPER_SEARCH_SOURCES` | Optional comma-separated source allowlist, for example `arxiv,inspire,ads`. viXra and aiXiv are disabled by default; include `vixra` or `aixiv` in this list to opt in. aiXiv has no search API, so queries filter its most recent 200 public submissions locally. |
 | `SEMANTIC_SCHOLAR_API_KEY` | Optional Semantic Scholar API key. Without it, Semantic Scholar remains enabled but rate-limited. |
 | `ADS_API_KEY` | NASA ADS API key. ADS is disabled unless this is set. |
 | `OPENALEX_EMAIL` | Optional OpenAlex polite-pool email. |
@@ -89,10 +89,10 @@ export PAPER_SEARCH_SOURCES="arxiv,inspire,ads,openalex,crossref"
 paper-search
 ```
 
-Example enabling viXra:
+Example enabling viXra and aiXiv:
 
 ```sh
-export PAPER_SEARCH_SOURCES="arxiv,inspire,crossref,doaj,europepmc,semantic_scholar,openalex,vixra"
+export PAPER_SEARCH_SOURCES="arxiv,inspire,crossref,doaj,europepmc,semantic_scholar,openalex,hexagon,vixra,aixiv"
 paper-search
 ```
 

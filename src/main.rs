@@ -879,7 +879,7 @@ impl ServerHandler for PaperSearchServer {
             .with_instructions(
                 "Search, index, and retrieve scientific papers across open journals. \
                  Supports arXiv, INSPIRE-HEP, Semantic Scholar, OpenAlex, CrossRef, \
-                 NASA ADS, Europe PMC, DOAJ, and opt-in viXra. Local hybrid search with \
+                 NASA ADS, Europe PMC, DOAJ, Hexagon, and opt-in viXra and aiXiv. Local hybrid search with \
                  BM25 + SPECTER2 embeddings. Can create browser-mediated institutional \
                  access URLs when a library proxy is configured; credentials never pass \
                  through the MCP server.",
@@ -921,6 +921,10 @@ fn source_from_prefixed_id(id: &str) -> Option<&'static str> {
         Some("doaj")
     } else if id.starts_with("vixra:") {
         Some("vixra")
+    } else if id.starts_with("hexagon:") {
+        Some("hexagon")
+    } else if id.starts_with("aixiv:") {
+        Some("aixiv")
     } else if id.starts_with("openalex:") {
         Some("openalex")
     } else {
@@ -999,5 +1003,13 @@ mod tests {
     #[test]
     fn prefixed_vixra_id_still_routes_to_vixra() {
         assert_eq!(source_from_prefixed_id("vixra:2603.0090"), Some("vixra"));
+        assert_eq!(
+            source_from_prefixed_id("hexagon:2610.00588"),
+            Some("hexagon")
+        );
+        assert_eq!(
+            source_from_prefixed_id("aixiv:aixiv.261026.000001"),
+            Some("aixiv")
+        );
     }
 }

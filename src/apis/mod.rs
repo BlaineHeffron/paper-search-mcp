@@ -1,8 +1,10 @@
 pub mod ads;
+pub mod aixiv;
 pub mod arxiv;
 pub mod crossref;
 pub mod doaj;
 pub mod europepmc;
+pub mod hexagon;
 pub mod inspire;
 pub mod openalex;
 pub mod semantic_scholar;
